@@ -1,6 +1,6 @@
 {
   "domain": "ev_smart_charger",
-  "name": "EV Smart Charger & Load Balancer",
+  "name": "EV Smart Charger and Load Balancer",
   "codeowners": ["@Tiimber"],
   "config_flow": true,
   "documentation": "https://github.com/Tiimber/ev_smart_charger",

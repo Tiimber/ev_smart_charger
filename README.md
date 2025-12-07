@@ -1,26 +1,26 @@
 # EV Smart Charger & Load Balancer for Home Assistant
 
-**EV Smart Charger** is a custom Home Assistant integration designed to optimize electric vehicle charging based on real-time electricity prices (Nordpool), household load balancing (P1 Meter), and user scheduling.
+**EV Smart Charger** is a custom Home Assistant integration designed to optimize electric vehicle charging based on real-time electricity prices (eg. Nordpool), household load balancing (P1 Meter), and user scheduling. It also allows you to charge your car to different percentages based on if the electricity price is very low of high.
 
-It specifically targets users with **Zaptec** chargers (or similar controllable entities) and **3-phase** household power metering.
+This is written to fit my need, which is a very specific combination, but I've tried to cover a more generic use case and I do believe you could create your own switches and sensors with custom templates and automations to make practically any brands work. My specific combination is Nordpool for electricity spot price, a P1ib device hooked into my electric meters' HAN-port of my electric meter, Zaptec Go as charger for my Hyundai Kona, connected through the Hyundai / Kia Connect Custom Integration.
+
+I also have a Local Calendar integration, where I in advance have set my specific, varying, but on a recurring schedule with ten minute events of each morning, which I use for automatically starting climate just before when I leave home. I have made this calendar compatible for knowing the target time of the charging window as well. If people are interested, I could bake in my Climate control code into this integration as well, or perhaps make that available as another custom integration.
 
 **Note!** *Much of the code was written by AI, and just tested and heavily inspected and questioned by me in several iterations. I am a programmer in my work, but Python and Home Assistant specifics aren't my specialities.*
-
-*This is written to fit my need, which is a very specific combination, but I've tried to cover a more generic use case. My combination is Nordpool spot price, a P1ib device hooked into my electric meters' HAN-port, Zaptec Go as charger for my Hyundai Kona, connected through the Hyundai / Kia Connect Custom Integration.*
-
-*I also have a Local Calendar integration, where I in advance have set my specific, varying, but on a recurring schedule with ten minute events of each morning, which I use for automatically starting climate just before when I leave home. I have made this calendar compatible for the available charging window as well. If people are interested, I could bake that into this integration as well, or perhaps make that available as another custom integration.*
 
 **Sample dashboard card**
 
 [![Full Dashboard Card](./dashboard_card_small.png)](./dashboard_card_full.png)
+
+*More Dashboard code samples, with YAML code, can be found through the link in the bottom of this file.*
 
 ## Features
 
 * **Smart Scheduling:** Automatically plans charging during the cheapest hours between now and your departure time.
 * **Load Balancing:** Dynamically calculates the maximum safe current to prevent tripping your main house fuse (based on real-time P1ib meter readings).
 * **Cost Estimation:** Calculates the total session cost including Spot Price, Grid Fees, and VAT.
-
 * **Calendar Integration:** Reads your local calendar for events to set custom departure times and target charge levels automatically.
+  * In my case, I have varying schedule that repeats every two weeks, one pattern the first week and another the next week.
 * **Manual Overrides:** Easily override the next charging session's target percentage or departure time without affecting your standard daily schedule.
 * **Maintenance Mode:** Keeps the charger active (if price allows) after reaching the target to support battery balancing or climate control.
 
@@ -28,9 +28,9 @@ It specifically targets users with **Zaptec** chargers (or similar controllable 
 
 Before installing, ensure you have the following:
 
-1.  **Electricity Price Sensor (Optional):** A sensor providing electricity prices with `today` and `tomorrow` attributes per quarter of an hour (e.g., via the [Nordpool custom component](https://github.com/custom-components/nordpool)). If omitted, the integration will perform Load Balancing only (charging immediately).
-2.  **ApexCharts Card:** Required for the recommended visualization graph. Install via HACS (Frontend > ApexCharts Card).
-3.  **P1ib/Grid Meter:** Sensors reporting current (Amps) for Phase 1, 2, and 3.
+1.  **P1ib/Grid Meter:** Sensors reporting current (Amps) for Phase 1, 2, and 3.
+2.  **Electricity Price Sensor (Optional):** A sensor providing electricity prices with `today` and `tomorrow` attributes per quarter of an hour (e.g., via the [Nordpool custom component](https://github.com/custom-components/nordpool)). If omitted, the integration will perform Load Balancing only (charging immediately).
+3.  **ApexCharts Card (Optional):** Required for the recommended visualization graph. Install via HACS (Frontend > ApexCharts Card).
 
 ## Installation
 
