@@ -240,6 +240,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if cal_entity:
                 try:
                     now = datetime.now()
+                    # Ask for next 48 hours to be safe, filter later
                     start_date = now
                     end_date = now + timedelta(hours=48)
                     
@@ -265,9 +266,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             await self._handle_plugged_event(data["car_plugged"], data)
 
             # 6. Logic: Load Balancing
-            data["max_available_current"] = self._calculate_load_balancing(
-                data["p1_l1"], data["p1_l2"], data["p1_l3"]
-            )
+            # FIX: Updated to call with 'data' dict, not individual arguments
+            data["max_available_current"] = self._calculate_load_balancing(data)
 
             # 7. Logic: Price Analysis (Simple status)
             data["current_price_status"] = self._analyze_prices(data["price_data"])
