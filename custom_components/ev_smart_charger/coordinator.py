@@ -76,6 +76,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         self._last_applied_state = None # "charging" or "stopped"
         self._last_applied_car_limit = -1
         
+        # Virtual SoC Estimator
+        self._virtual_soc = 0.0
+        self._last_update_time = datetime.now()
+        
         # New Flag: Tracks if user explicitly moved the Next Session slider
         self.manual_override_active = False 
         
@@ -223,14 +227,19 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             # 2. Merge User Settings (Persistence)
             data.update(self.user_settings)
             
-            # 3. Fetch Calendar Events (Async Service Call)
+            # 3. Update Virtual SoC (Handle stale sensors)
+            self._update_virtual_soc(data)
+            # OVERWRITE the sensor soc with our better estimate if needed
+            # This ensures the planning logic runs on the most accurate number we have
+            data["car_soc"] = self._virtual_soc
+            
+            # 4. Fetch Calendar Events
             cal_entity = self.conf_keys.get("calendar")
             data["calendar_events"] = []
             
             if cal_entity:
                 try:
                     now = datetime.now()
-                    # Ask for next 48 hours to be safe, filter later
                     start_date = now
                     end_date = now + timedelta(hours=48)
                     
@@ -252,22 +261,22 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 except Exception as e:
                     _LOGGER.warning(f"Failed to fetch calendar events: {e}")
 
-            # 4. Logic: Handle Plugged-In Event (And Unplug Reset)
+            # 5. Logic: Handle Plugged-In Event
             await self._handle_plugged_event(data["car_plugged"], data)
 
-            # 5. Logic: Load Balancing
+            # 6. Logic: Load Balancing
             data["max_available_current"] = self._calculate_load_balancing(
                 data["p1_l1"], data["p1_l2"], data["p1_l3"]
             )
 
-            # 6. Logic: Price Analysis (Simple status)
+            # 7. Logic: Price Analysis (Simple status)
             data["current_price_status"] = self._analyze_prices(data["price_data"])
 
-            # 7. Logic: Smart Charging Plan (The Brain)
+            # 8. Logic: Smart Charging Plan (The Brain)
             plan = self._generate_charging_plan(data)
             data.update(plan)
 
-            # 8. ACTUATION: Apply logic to physical charger AND car
+            # 9. ACTUATION: Apply logic to physical charger AND car
             await self._apply_charger_control(data, plan)
             
             # Attach log to data so Sensor can read it
@@ -279,6 +288,46 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"Error in EV Coordinator: {err}")
             raise UpdateFailed(f"Error communicating with API: {err}")
 
+    def _update_virtual_soc(self, data: dict):
+        """Update the internal estimated SoC based on charging activity."""
+        current_time = datetime.now()
+        sensor_soc = data.get("car_soc", 0.0)
+        
+        # 1. Sync: If car sensor reports HIGHER than our estimate, trust the car.
+        #    Also sync if we just initialized (0.0).
+        if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
+            self._virtual_soc = sensor_soc
+        
+        # 2. Estimate: If we were charging in the last interval, estimate gain.
+        #    We check if we told the charger to be ON and gave it Amps.
+        if self._last_applied_state == "charging" and self._last_applied_amps > 0:
+            
+            # Calculate time delta in hours
+            seconds_passed = (current_time - self._last_update_time).total_seconds()
+            hours_passed = seconds_passed / 3600.0
+            
+            # Estimate Power (3-phase 230V standard)
+            # P (kW) = 3 * 230V * Amps / 1000
+            estimated_power_kw = (3 * 230 * self._last_applied_amps) / 1000.0
+            
+            # Efficiency Factor
+            efficiency_pct = self.entry.data.get(CONF_CHARGER_LOSS, 10.0)
+            efficiency_factor = 1.0 - (efficiency_pct / 100.0)
+            
+            # Energy to Battery
+            added_kwh = estimated_power_kw * hours_passed * efficiency_factor
+            
+            # Convert to % SoC
+            if self.car_capacity > 0:
+                added_percent = (added_kwh / self.car_capacity) * 100.0
+                self._virtual_soc += added_percent
+                
+                # Cap at 100
+                if self._virtual_soc > 100:
+                    self._virtual_soc = 100.0
+
+        self._last_update_time = current_time
+
     async def _apply_charger_control(self, data: dict, plan: dict):
         """Send commands to the Zaptec entities and Car."""
         
@@ -288,11 +337,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # 1. Determine Desired State
         should_charge = data.get("should_charge_now", False)
-        
-        # Floor value to be safe
         safe_amps = math.floor(data.get("max_available_current", 0))
         
-        # Minimum charging standard is 6A. If we have less, we must stop.
         if safe_amps < 6:
             if should_charge:
                 self._add_log(f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Stopping.")
@@ -314,7 +360,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.error(f"Failed to set Car Charge Limit: {e}")
 
         # 3. Control Current Limiter
-        # Only update if changed
         if safe_amps != self._last_applied_amps and self.conf_keys["zap_limit"]:
             try:
                 await self.hass.services.async_call(
@@ -332,7 +377,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         
         if desired_state != self._last_applied_state:
             try:
-                # PREFERRED METHOD: Use the single Switch
                 if self.conf_keys.get("zap_switch"):
                     service = SERVICE_TURN_ON if should_charge else SERVICE_TURN_OFF
                     await self.hass.services.async_call(
@@ -424,6 +468,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # Case A: Just Plugged In -> Force SoC Update
         if is_plugged and not self.previous_plugged_state:
             self._add_log("Car plugged in.")
+            
+            # Sync Virtual SoC to Sensor immediately on plug-in
+            self._virtual_soc = data.get("car_soc", 0.0)
+            
             soc_entity = self.conf_keys["car_soc"]
             try:
                 await self.hass.services.async_call(
@@ -729,13 +777,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         plan["planned_target_soc"] = final_target
 
         # 4. Calculate Energy Needed
-        current_soc = data.get("car_soc", 0)
+        # Use our Virtual SoC (synced/estimated) instead of potentially stale sensor
+        current_soc = data.get("car_soc", 0.0)
         selected_slots = []
         selected_start_times = set()
         price_limit_high = data.get(ENTITY_PRICE_LIMIT_2, 1.5)
 
         if current_soc >= final_target:
-            plan["charging_summary"] = f"Target reached ({current_soc}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
+            plan["charging_summary"] = f"Target reached ({int(current_soc)}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
             for slot in calc_window:
                 if slot["price"] <= price_limit_high:
                     selected_start_times.add(slot["start"])
@@ -754,7 +803,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             hours_needed = kwh_to_pull / est_power_kw
             
             # Dynamic slot duration calculation (supports 15-min or 60-min slots)
-            slot_duration_hours = (calc_window[0]["end"] - calc_window[0]["start"]).seconds / 3600
+            slot_duration_hours = (calc_window[0]["end"] - calc_window[0]["start"]).seconds / 3600.0
+            # Guard against zero division if window data bad
+            if slot_duration_hours <= 0: slot_duration_hours = 1.0
+                
             slots_needed = math.ceil(hours_needed / slot_duration_hours)
 
             sorted_window = sorted(calc_window, key=lambda x: x["price"])
@@ -805,7 +857,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     
                     # Calculate SoC gain for this specific energy amount
                     kwh_batt_this_slot = kwh_this_slot * efficiency
-                    soc_gain_this_slot = (kwh_batt_this_slot / self.car_capacity) * 100
+                    soc_gain_this_slot = (kwh_batt_this_slot / self.car_capacity) * 100.0
                     
                     if current_block and slot["start"] == current_block["end"]:
                         current_block["end"] = slot["end"]
