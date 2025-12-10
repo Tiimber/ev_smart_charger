@@ -73,12 +73,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         
         # State tracking to prevent API spamming
         self._last_applied_amps = -1
-        self._last_applied_state = None # "charging" or "stopped"
+        self._last_applied_state = None # "charging" or "paused"
         self._last_applied_car_limit = -1
-        
-        # Virtual SoC Estimator
-        self._virtual_soc = 0.0
-        self._last_update_time = datetime.now()
         
         # New Flag: Tracks if user explicitly moved the Next Session slider
         self.manual_override_active = False 
@@ -227,19 +223,24 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             # 2. Merge User Settings (Persistence)
             data.update(self.user_settings)
             
-            # 3. Update Virtual SoC (Handle stale sensors)
+            # 3. Handle Plugged-In Event (MOVED TO TOP)
+            # This ensures we detect plug-in and sync Virtual SoC BEFORE calculating plans
+            await self._handle_plugged_event(data["car_plugged"], data)
+            
+            # 4. Update Virtual SoC (Handle stale sensors)
             self._update_virtual_soc(data)
             # OVERWRITE the sensor soc with our better estimate if needed
             # This ensures the planning logic runs on the most accurate number we have
             data["car_soc"] = self._virtual_soc
             
-            # 4. Fetch Calendar Events
+            # 5. Fetch Calendar Events
             cal_entity = self.conf_keys.get("calendar")
             data["calendar_events"] = []
             
             if cal_entity:
                 try:
                     now = datetime.now()
+                    # Ask for next 48 hours to be safe, filter later
                     start_date = now
                     end_date = now + timedelta(hours=48)
                     
@@ -261,13 +262,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 except Exception as e:
                     _LOGGER.warning(f"Failed to fetch calendar events: {e}")
 
-            # 5. Logic: Handle Plugged-In Event
-            await self._handle_plugged_event(data["car_plugged"], data)
-
             # 6. Logic: Load Balancing
-            data["max_available_current"] = self._calculate_load_balancing(
-                data["p1_l1"], data["p1_l2"], data["p1_l3"]
-            )
+            data["max_available_current"] = self._calculate_load_balancing(data)
 
             # 7. Logic: Price Analysis (Simple status)
             data["current_price_status"] = self._analyze_prices(data["price_data"])
@@ -341,7 +337,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         
         if safe_amps < 6:
             if should_charge:
-                self._add_log(f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Stopping.")
+                self._add_log(f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Pausing.")
             should_charge = False
         
         # 2. Control Car Charge Limit
@@ -373,10 +369,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 _LOGGER.error(f"Failed to set Zaptec limit: {e}")
 
         # 4. Control Start/Stop (Use Switch if available)
-        desired_state = "charging" if should_charge else "stopped"
+        desired_state = "charging" if should_charge else "paused"
         
         if desired_state != self._last_applied_state:
             try:
+                # PREFERRED METHOD: Use the single Switch
                 if self.conf_keys.get("zap_switch"):
                     service = SERVICE_TURN_ON if should_charge else SERVICE_TURN_OFF
                     await self.hass.services.async_call(
@@ -384,7 +381,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         {"entity_id": self.conf_keys["zap_switch"]},
                         blocking=True
                     )
-                    self._add_log(f"Switched Charging state to: {desired_state.upper()}")
+                    
+                    # Log message based on state
+                    action = "Resuming charging" if should_charge else "Pausing charging"
+                    self._add_log(f"{action} (State: {desired_state.upper()})")
                 
                 # FALLBACK METHOD: Separate Buttons
                 else:
@@ -407,7 +407,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                                 {"entity_id": self.conf_keys["zap_stop"]},
                                 blocking=True
                             )
-                            self._add_log("Sent Stop command to Zaptec")
+                            self._add_log("Sent Pause/Stop command to Zaptec")
                         
                 self._last_applied_state = desired_state
                 
@@ -508,12 +508,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         {"entity_id": self.conf_keys["zap_switch"]},
                         blocking=True
                     )
-                    self._add_log("Unplugged: Forced Zaptec Switch OFF.")
+                    self._add_log("Unplugged: Forced Zaptec Switch OFF (Paused).")
                 except Exception as e:
                     _LOGGER.error(f"Failed to force Zaptec off: {e}")
             
             # Force State Reset so next plug-in starts fresh logic
-            self._last_applied_state = "stopped" # We just stopped it
+            self._last_applied_state = "paused" 
             self._last_applied_car_limit = -1
 
         self.previous_plugged_state = is_plugged
