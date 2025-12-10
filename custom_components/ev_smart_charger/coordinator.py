@@ -263,6 +263,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning(f"Failed to fetch calendar events: {e}")
 
             # 6. Logic: Load Balancing
+            # FIX: Updated to call with 'data' dict, not individual arguments
             data["max_available_current"] = self._calculate_load_balancing(data)
 
             # 7. Logic: Price Analysis (Simple status)
