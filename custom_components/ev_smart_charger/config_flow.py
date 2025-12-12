@@ -20,6 +20,8 @@ from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
+    DeviceSelector,           # Added
+    DeviceSelectorConfig,     # Added
 )
 
 from .const import (
@@ -70,11 +72,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        # Check if already configured
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
-        # Skip the empty Intro step and jump straight to Charger setup
         return await self.async_step_charger()
 
     async def async_step_charger(
@@ -125,7 +125,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="price_calendar", data_schema=self._get_price_calendar_schema()
         )
 
-    # --- Schema Helpers (Static for reuse in Options) ---
+    # --- Schema Helpers ---
 
     @staticmethod
     def _get_charger_schema(defaults=None):
@@ -158,16 +158,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_CAR_CAPACITY, default=defaults.get(CONF_CAR_CAPACITY, DEFAULT_CAPACITY)): NumberSelector(
                 NumberSelectorConfig(min=10, max=150, step=1, unit_of_measurement="kWh", mode=NumberSelectorMode.BOX)
             ),
-            # Option A: Number Entity
             vol.Optional(CONF_CAR_CHARGING_LEVEL_ENTITY, default=defaults.get(CONF_CAR_CHARGING_LEVEL_ENTITY)): EntitySelector(
                 EntitySelectorConfig(domain="number")
             ),
-            # Option B: Service Call
             vol.Optional(CONF_CAR_LIMIT_SERVICE, default=defaults.get(CONF_CAR_LIMIT_SERVICE)): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.TEXT)
             ),
-            vol.Optional(CONF_CAR_LIMIT_ENTITY_ID, default=defaults.get(CONF_CAR_LIMIT_ENTITY_ID)): EntitySelector(
-                EntitySelectorConfig()
+            # CHANGED: Use DeviceSelector to allow picking the Car Device
+            vol.Optional(CONF_CAR_LIMIT_ENTITY_ID, default=defaults.get(CONF_CAR_LIMIT_ENTITY_ID)): DeviceSelector(
+                DeviceSelectorConfig()
             ),
         })
 
@@ -242,33 +241,25 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_charger(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage Charger settings."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
-        
         current_config = {**self._config_entry.data, **self._config_entry.options}
         return self.async_show_form(step_id="charger", data_schema=ConfigFlow._get_charger_schema(current_config))
 
     async def async_step_car(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage Car settings."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
-        
         current_config = {**self._config_entry.data, **self._config_entry.options}
         return self.async_show_form(step_id="car", data_schema=ConfigFlow._get_car_schema(current_config))
 
     async def async_step_meter(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage Meter settings."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
-        
         current_config = {**self._config_entry.data, **self._config_entry.options}
         return self.async_show_form(step_id="meter", data_schema=ConfigFlow._get_meter_schema(current_config))
 
     async def async_step_price_calendar(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage Price & Calendar settings."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
-        
         current_config = {**self._config_entry.data, **self._config_entry.options}
         return self.async_show_form(step_id="price_calendar", data_schema=ConfigFlow._get_price_calendar_schema(current_config))

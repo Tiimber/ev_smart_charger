@@ -396,18 +396,29 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             # Method B: Service Call
             elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_svc_ent"):
                 try:
-                    # Extract domain and service
+                    # Parse domain.service
                     full_service = self.conf_keys["car_svc"]
                     if "." in full_service:
                         domain, service_name = full_service.split(".", 1)
                         
+                        # Build payload
+                        payload = {
+                            "ac_limit": target_soc,
+                            "dc_limit": target_soc
+                        }
+                        
+                        # Determine if target is device_id or entity_id
+                        target_id = self.conf_keys["car_svc_ent"]
+                        
+                        # Heuristic: Entity IDs usually have a dot (domain.name). Devices are usually UUIDs.
+                        if "." in target_id:
+                            payload["entity_id"] = target_id
+                        else:
+                            payload["device_id"] = target_id
+
                         await self.hass.services.async_call(
                             domain, service_name,
-                            {
-                                "entity_id": self.conf_keys["car_svc_ent"],
-                                "ac_limit": target_soc,
-                                "dc_limit": target_soc
-                            },
+                            payload,
                             blocking=True
                         )
                         self._last_applied_car_limit = target_soc
