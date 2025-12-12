@@ -21,6 +21,8 @@ from .const import (
     CONF_CAR_PLUGGED_SENSOR,
     CONF_CAR_CAPACITY,
     CONF_CAR_CHARGING_LEVEL_ENTITY,
+    CONF_CAR_LIMIT_SERVICE,
+    CONF_CAR_LIMIT_ENTITY_ID,
     CONF_PRICE_SENSOR,
     CONF_P1_L1,
     CONF_P1_L2,
@@ -104,7 +106,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "p1_l3": get_conf(CONF_P1_L3),
             "car_soc": get_conf(CONF_CAR_SOC_SENSOR),
             "car_plugged": get_conf(CONF_CAR_PLUGGED_SENSOR),
-            "car_limit": get_conf(CONF_CAR_CHARGING_LEVEL_ENTITY), 
+            "car_limit": get_conf(CONF_CAR_CHARGING_LEVEL_ENTITY), # Option A
+            "car_svc": get_conf(CONF_CAR_LIMIT_SERVICE),         # Option B
+            "car_svc_ent": get_conf(CONF_CAR_LIMIT_ENTITY_ID),   # Option B
             "price": get_conf(CONF_PRICE_SENSOR), 
             "calendar": get_conf(CONF_CALENDAR_ENTITY),
             # Control Entities
@@ -366,10 +370,18 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # If paused, we force 0A. If charging, we use calculated safe amps.
         target_amps = safe_amps if should_charge else 0
         
+        desired_state = "charging" if should_charge else "paused"
+        
         # 2. Control Car Charge Limit
-        if self.conf_keys["car_limit"]:
-            target_soc = int(plan.get("planned_target_soc", 80))
-            if target_soc != self._last_applied_car_limit:
+        target_soc = int(plan.get("planned_target_soc", 80))
+        
+        # Send if changed OR if we are transitioning to charging (ensure car receives cmd)
+        is_starting = (desired_state == "charging" and self._last_applied_state != "charging")
+        
+        if target_soc != self._last_applied_car_limit or is_starting:
+            
+            # Method A: Number Entity
+            if self.conf_keys["car_limit"]:
                 try:
                     await self.hass.services.async_call(
                         "number", "set_value",
@@ -380,9 +392,30 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._add_log(f"Set Car Charge Limit to {target_soc}%")
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Car Charge Limit: {e}")
+            
+            # Method B: Service Call
+            elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_svc_ent"):
+                try:
+                    # Extract domain and service
+                    full_service = self.conf_keys["car_svc"]
+                    if "." in full_service:
+                        domain, service_name = full_service.split(".", 1)
+                        
+                        await self.hass.services.async_call(
+                            domain, service_name,
+                            {
+                                "entity_id": self.conf_keys["car_svc_ent"],
+                                "ac_limit": target_soc,
+                                "dc_limit": target_soc
+                            },
+                            blocking=True
+                        )
+                        self._last_applied_car_limit = target_soc
+                        self._add_log(f"Service Call: Set Car Limit to {target_soc}%")
+                except Exception as e:
+                    _LOGGER.error(f"Failed to call Car Limit Service: {e}")
 
         # 3. Control Start/Stop (Switch Logic)
-        desired_state = "charging" if should_charge else "paused"
         
         # Order of Operations:
         # - If Charging: Turn Switch ON, then Set Amps.
@@ -491,20 +524,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         data["p1_l1"] = get_float(self.conf_keys["p1_l1"])
         data["p1_l2"] = get_float(self.conf_keys["p1_l2"])
         data["p1_l3"] = get_float(self.conf_keys["p1_l3"])
-        
-        # Check SoC Sensor Validity
-        soc_entity = self.conf_keys["car_soc"]
-        if soc_entity:
-            soc_state = self.hass.states.get(soc_entity)
-            if soc_state is None or soc_state.state in [STATE_UNAVAILABLE, STATE_UNKNOWN]:
-                 data["car_soc"] = None # Mark as unknown
-            else:
-                try:
-                    data["car_soc"] = float(soc_state.state)
-                except ValueError:
-                    data["car_soc"] = None
-        else:
-            data["car_soc"] = 0.0 # No sensor configured
+        data["car_soc"] = get_float(self.conf_keys["car_soc"])
         
         # Fetch Charger Current if configured
         data["ch_l1"] = get_float(self.conf_keys.get("ch_l1"))
