@@ -298,10 +298,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         sensor_soc = data.get("car_soc")
         
         # 1. Sync Logic
-        # Sync if sensor is valid AND (Higher than estimate OR we are not charging)
-        # This allows the car's real sensor to correct our drift upwards, but prevents it from dragging us down if it's stale.
+        # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
+        # OR if we are uninitialized (0.0).
+        # We REMOVED the check for 'paused' state to prevent reverting to stale car data when pausing.
         if sensor_soc is not None:
-            if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0 or self._last_applied_state != "charging":
+            if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
         
         # 2. Estimate Logic
@@ -339,7 +340,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._virtual_soc += added_percent
                     
                     # Cap at Physical Car Limit (if we know it)
-                    # This prevents the estimator from drifting past the point where the car stopped itself.
                     if self._last_applied_car_limit > 0:
                         if self._virtual_soc > self._last_applied_car_limit:
                             self._virtual_soc = float(self._last_applied_car_limit)
