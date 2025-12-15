@@ -150,6 +150,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 # Restore Override Flag
                 self.manual_override_active = data.get("manual_override_active", False)
                 
+                # Restore Action Log
+                self.action_log = data.get("action_log", [])
+                
                 # Restore Settings
                 settings = data.get("user_settings", {})
                 
@@ -163,7 +166,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                             _LOGGER.warning(f"Failed to parse saved time for {key}")
                             
                 self.user_settings.update(settings)
-                self._add_log("System started. Settings loaded.")
+                self._add_log("System started. Settings and Log loaded.")
         except Exception as e:
             _LOGGER.error(f"Failed to load EV settings: {e}")
             
@@ -180,7 +183,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             
             return {
                 "manual_override_active": self.manual_override_active,
-                "user_settings": clean_settings
+                "user_settings": clean_settings,
+                "action_log": self.action_log
             }
             
         self.store.async_delay_save(data_to_save, 1.0)
