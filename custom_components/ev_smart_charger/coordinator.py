@@ -84,10 +84,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # Session Tracking
         self.current_session = None  # Active recording
         self.last_session_data = None  # Finished report
+        # Flag to capture short charging bursts between ticks
+        self._was_charging_in_interval = False
 
         # State tracking to prevent API spamming
         self._last_applied_amps = -1
-        self._last_applied_state = None  # "charging" or "paused"
+        self._last_applied_state = None  # "charging", "paused", "stopped"
         self._last_applied_car_limit = -1
 
         # Virtual SoC Estimator
@@ -353,15 +355,27 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         vat_pct = data.get(ENTITY_PRICE_VAT, 0.0)
         adjusted_price = (current_price + extra_fee) * (1 + vat_pct / 100.0)
 
+        # Detect charging status (capture slivers)
+        # Charging is considered TRUE if state is charging OR if we saw it active since last tick
+        is_charging = (
+            1
+            if (
+                self._last_applied_state == "charging" or self._was_charging_in_interval
+            )
+            else 0
+        )
+
         point = {
             "time": now_ts.isoformat(),
             "soc": data.get("car_soc", 0),
             "amps": self._last_applied_amps,
-            "charging": 1 if self._last_applied_state == "charging" else 0,
+            "charging": is_charging,
             "price": adjusted_price,
         }
 
         self.current_session["history"].append(point)
+        # Reset the inter-tick memory
+        self._was_charging_in_interval = False
 
     def _finalize_session(self):
         """Generate the final report for the ended session."""
@@ -518,7 +532,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     )
 
             # Draw X-Axis Timestamps
-            # Start Time
             try:
                 start_dt = datetime.fromisoformat(history[0]["time"])
                 start_str = start_dt.strftime("%H:%M")
@@ -526,11 +539,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     (20, graph_bottom + 5), start_str, font=font_small, fill="black"
                 )
 
-                # End Time
                 end_dt = datetime.fromisoformat(history[-1]["time"])
                 end_str = end_dt.strftime("%H:%M")
 
-                # Right align calculation (approximate if textlength not available)
+                # Right align
                 try:
                     w = draw.textlength(end_str, font=font_small)
                     draw.text(
@@ -547,8 +559,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         fill="black",
                     )
 
-                # Middle Time (Only if session > 4 hours)
-                if len(history) > 4 * 120:  # 4 hours * 2 points/min (approx)
+                # Middle Time
+                if len(history) > 4 * 120:
                     mid_idx = len(history) // 2
                     mid_dt = datetime.fromisoformat(history[mid_idx]["time"])
                     mid_str = mid_dt.strftime("%H:%M")
@@ -574,6 +586,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # 1. Sync Logic
         # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
         # OR if we are uninitialized (0.0).
+        # We REMOVED the check for 'paused' state to prevent reverting to stale car data when pausing.
         if sensor_soc is not None:
             if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
@@ -643,21 +656,30 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             should_charge = False
 
         # Determine Target Amps based on State
-        # If paused, we force 0A. If charging, we use calculated safe amps.
         target_amps = safe_amps if should_charge else 0
-
         desired_state = "charging" if should_charge else "paused"
+
+        # --- MAINTENANCE MODE / PAUSED OVERRIDE ---
+        # If in maintenance mode (target reached) or explicitly paused:
+        # We ensure Switch is ON (if possible/needed for car) but Amps are 0.
+
+        maintenance_active = "Maintenance mode active" in plan.get(
+            "charging_summary", ""
+        )
+
+        if maintenance_active:
+            # FORCE: Switch ON, Amps 0
+            should_charge = True
+            target_amps = 0
+            desired_state = "maintenance"
 
         # 2. Control Car Charge Limit
         target_soc = int(plan.get("planned_target_soc", 80))
-
-        # Send if changed OR if we are transitioning to charging (ensure car receives cmd)
         is_starting = (
             desired_state == "charging" and self._last_applied_state != "charging"
         )
 
         if target_soc != self._last_applied_car_limit or is_starting:
-            # Method A: Number Entity
             if self.conf_keys["car_limit"]:
                 try:
                     await self.hass.services.async_call(
@@ -670,27 +692,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._add_log(f"Set Car Charge Limit to {target_soc}%")
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Car Charge Limit: {e}")
-
-            # Method B: Service Call
             elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_svc_ent"):
                 try:
-                    # Parse domain.service
                     full_service = self.conf_keys["car_svc"]
                     if "." in full_service:
                         domain, service_name = full_service.split(".", 1)
-
-                        # Build payload
                         payload = {"ac_limit": target_soc, "dc_limit": target_soc}
-
-                        # Determine if target is device_id or entity_id
                         target_id = self.conf_keys["car_svc_ent"]
-
-                        # Heuristic: Entity IDs usually have a dot (domain.name). Devices are usually UUIDs.
                         if "." in target_id:
                             payload["entity_id"] = target_id
                         else:
                             payload["device_id"] = target_id
-
                         await self.hass.services.async_call(
                             domain, service_name, payload, blocking=True
                         )
@@ -701,12 +713,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # 3. Control Start/Stop (Switch Logic)
 
-        # Order of Operations:
-        # - If Charging: Turn Switch ON, then Set Amps.
-        # - If Pausing: Set Amps 0, then Turn Switch OFF.
-
         if should_charge:
-            # ---> CHARGING SEQUENCE <---
+            # ---> CHARGING / MAINTENANCE SEQUENCE <---
+
+            # Only record active charging logic for slivers if Amps > 0
+            if target_amps > 0:
+                self._was_charging_in_interval = True
 
             # A. Ensure Switch is ON
             if desired_state != self._last_applied_state:
@@ -718,7 +730,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                             {"entity_id": self.conf_keys["zap_switch"]},
                             blocking=True,
                         )
-                        self._add_log(f"Switched Charging state to: CHARGING")
+                        state_msg = (
+                            "CHARGING" if target_amps > 0 else "MAINTENANCE (0A)"
+                        )
+                        self._add_log(f"Switched Charging state to: {state_msg}")
                     elif self.conf_keys.get("zap_resume"):
                         # Fallback button
                         await self.hass.services.async_call(
@@ -729,7 +744,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         )
                         self._add_log("Sent Resume command")
 
-                    self._last_applied_state = "charging"
+                    self._last_applied_state = desired_state
                 except Exception as e:
                     _LOGGER.error(f"Failed to switch Zaptec state to CHARGING: {e}")
 
@@ -746,7 +761,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         blocking=True,
                     )
                     self._last_applied_amps = target_amps
-                    self._add_log(f"Load Balancing: Set Zaptec limit to {target_amps}A")
+                    if target_amps > 0:
+                        self._add_log(
+                            f"Load Balancing: Set Zaptec limit to {target_amps}A"
+                        )
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Zaptec limit: {e}")
 
@@ -754,7 +772,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             # ---> PAUSING SEQUENCE <---
 
             # A. Set Amps to 0 first (Soft Stop)
-            if target_amps != self._last_applied_amps and self.conf_keys["zap_limit"]:
+            if self._last_applied_amps != 0 and self.conf_keys["zap_limit"]:
                 try:
                     await self.hass.services.async_call(
                         "number",
@@ -788,7 +806,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         )
                         self._add_log("Sent Stop command")
 
-                    self._last_applied_state = "paused"
+                    self._last_applied_state = desired_state
                 except Exception as e:
                     _LOGGER.error(f"Failed to switch Zaptec state to PAUSED: {e}")
 
@@ -1146,7 +1164,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         if current_soc >= final_target:
             plan["charging_summary"] = (
-                f"Target reached ({current_soc}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
+                f"Target reached ({int(current_soc)}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
             )
             for slot in calc_window:
                 if slot["price"] <= price_limit_high:
@@ -1207,9 +1225,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     slot_cost = adjusted_price * kwh_this_slot
                     total_plan_cost += slot_cost
                     kwh_batt_this_slot = kwh_this_slot * efficiency
-                    soc_gain_this_slot = (
-                        kwh_batt_this_slot / self.car_capacity
-                    ) * 100.0
+                    soc_gain_this_slot = (kwh_batt_this_slot / self.car_capacity) * 100
 
                     if current_block and slot["start"] == current_block["end"]:
                         current_block["end"] = slot["end"]
