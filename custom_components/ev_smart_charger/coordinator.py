@@ -89,7 +89,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # State tracking to prevent API spamming
         self._last_applied_amps = -1
-        self._last_applied_state = None  # "charging", "paused", "stopped"
+        self._last_applied_state = None  # "charging" or "paused"
         self._last_applied_car_limit = -1
 
         # Virtual SoC Estimator
@@ -442,18 +442,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         }
 
     def _generate_report_image(self, report: dict, file_path: str):
-        """Generate a PNG image for thermal printers."""
+        """Generate a PNG image for thermal printers with Dual Axes and SoC Line."""
         try:
             from PIL import Image, ImageDraw, ImageFont
         except ImportError:
             _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
             return
 
-        # Setup Canvas (576px wide is standard 80mm thermal width)
-        width = 576
+        # --- SETUP ---
+        width = 576  # Standard 80mm thermal width
         bg_color = "white"
 
-        # Fonts
         try:
             font_header = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
             font_text = ImageFont.truetype("DejaVuSans.ttf", 18)
@@ -463,12 +462,39 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             font_text = ImageFont.load_default()
             font_small = ImageFont.load_default()
 
-        # Create Image
-        height = 600
+        # Calculate Text Summary Section Height
+        # Identifying charging blocks
+        history = report.get("graph_data", [])
+        charging_blocks = []
+        if history:
+            current_block = None
+            for i, point in enumerate(history):
+                if point["charging"] == 1:
+                    if current_block is None:
+                        current_block = {
+                            "start": point["time"],
+                            "soc_start": point["soc"],
+                            "soc_end": point["soc"],
+                        }
+                    current_block["soc_end"] = point["soc"]
+                    current_block["end"] = point["time"]
+                else:
+                    if current_block:
+                        charging_blocks.append(current_block)
+                        current_block = None
+            if current_block:
+                charging_blocks.append(current_block)
+
+        text_lines_count = (
+            5 + len(charging_blocks) + 2
+        )  # Header stats + blocks + headers
+        text_section_height = 200 + (len(charging_blocks) * 30)
+
+        height = text_section_height + 350  # + Graph area
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
-        # Draw Text
+        # --- DRAW TEXT HEADER ---
         y = 20
         draw.text(
             (width // 2, y),
@@ -491,52 +517,158 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             draw.text((20, y), line, font=font_text, fill="black")
             y += 30
 
-        y += 20
+        y += 10
         draw.line([(10, y), (width - 10, y)], fill="black", width=2)
         y += 20
 
-        # Draw Graph (Price bars + Charging blocks)
-        history = report.get("graph_data", [])
+        # --- DRAW CHARGING LOG ---
+        if charging_blocks:
+            draw.text((20, y), "Charging Activity:", font=font_text, fill="black")
+            y += 25
+            for block in charging_blocks:
+                start_dt = datetime.fromisoformat(block["start"])
+                end_dt = datetime.fromisoformat(block["end"])
+                start_str = start_dt.strftime("%H:%M")
+                end_str = end_dt.strftime("%H:%M")
+                line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
+                draw.text((30, y), line, font=font_small, fill="black")
+                y += 20
+        else:
+            draw.text((20, y), "No charging recorded.", font=font_text, fill="black")
+            y += 25
+
+        y += 20  # Spacing before graph
+
+        # --- DRAW GRAPH ---
         if history:
-            graph_height = 200
-            graph_width = width - 40
-            graph_bottom = y + graph_height
+            graph_top = y
+            graph_height = 250
+            graph_bottom = graph_top + graph_height
 
-            # Find ranges
+            # Margins for axes
+            margin_left = 50
+            margin_right = 50
+            graph_draw_width = width - margin_left - margin_right
+
+            # --- 1. Calculate Ranges ---
             prices = [p["price"] for p in history]
-            min_p = min(prices) if prices else 0
-            max_p = max(prices) if prices else 1
-            if max_p == min_p:
-                max_p += 1
+            socs = [p["soc"] for p in history]
 
-            bar_w = max(1, graph_width / len(history))
+            min_price = min(prices) if prices else 0
+            max_price = max(prices) if prices else 1
+            # Round Min down to nearest 0.5, Max up to nearest 0.5
+            axis_min_p = math.floor(min_price * 2) / 2
+            axis_max_p = math.ceil(max_price * 2) / 2
+            if axis_max_p == axis_min_p:
+                axis_max_p += 0.5
+            price_range = axis_max_p - axis_min_p
+
+            count = len(history)
+
+            # --- 2. Draw Price Bars (Gray) ---
+            bar_w = graph_draw_width / max(1, count)
 
             for i, point in enumerate(history):
-                x = 20 + (i * bar_w)
+                x0 = margin_left + (i * bar_w)
+                x1 = margin_left + ((i + 1) * bar_w)
 
-                # Price Bar (Gray)
-                p_norm = (point["price"] - min_p) / (max_p - min_p)
+                # Height relative to price range
+                p_norm = (point["price"] - axis_min_p) / price_range
                 p_h = p_norm * graph_height
+
+                # Draw bar
                 draw.rectangle(
-                    [x, graph_bottom - p_h, x + bar_w, graph_bottom],
-                    fill="#ddd",
+                    [x0, graph_bottom - p_h, x1, graph_bottom],
+                    fill="#e0e0e0",
                     outline=None,
                 )
 
-                # Charging Block (Black overlay)
-                if point["charging"] == 1:
-                    draw.rectangle(
-                        [x, graph_bottom - 20, x + bar_w, graph_bottom],
-                        fill="black",
-                        outline=None,
-                    )
+            # --- 3. Draw Left Axis (Price) ---
+            draw.line(
+                [(margin_left, graph_top), (margin_left, graph_bottom)],
+                fill="black",
+                width=2,
+            )
 
-            # Draw X-Axis Timestamps
+            # Marks every 0.5
+            curr_mark = axis_min_p
+            while curr_mark <= axis_max_p + 0.01:
+                # Y position
+                norm = (curr_mark - axis_min_p) / price_range
+                mark_y = graph_bottom - (norm * graph_height)
+
+                # Tick
+                draw.line(
+                    [(margin_left - 5, mark_y), (margin_left, mark_y)],
+                    fill="black",
+                    width=1,
+                )
+
+                # Label
+                label = f"{curr_mark:.1f}"
+                draw.text(
+                    (margin_left - 35, mark_y - 7), label, font=font_small, fill="black"
+                )
+
+                curr_mark += 0.5
+
+            # --- 4. Draw Right Axis (SoC) ---
+            draw.line(
+                [
+                    (width - margin_right, graph_top),
+                    (width - margin_right, graph_bottom),
+                ],
+                fill="black",
+                width=2,
+            )
+
+            # Marks every 20%
+            for soc_mark in [0, 20, 40, 60, 80, 100]:
+                norm = soc_mark / 100.0
+                mark_y = graph_bottom - (norm * graph_height)
+
+                # Tick
+                draw.line(
+                    [
+                        (width - margin_right, mark_y),
+                        (width - margin_right + 5, mark_y),
+                    ],
+                    fill="black",
+                    width=1,
+                )
+
+                # Label
+                label = f"{soc_mark}%"
+                draw.text(
+                    (width - margin_right + 8, mark_y - 7),
+                    label,
+                    font=font_small,
+                    fill="black",
+                )
+
+            # --- 5. Draw SoC Line (Black) ---
+            points = []
+            for i, point in enumerate(history):
+                # X is center of the time slice
+                x = margin_left + (i * bar_w) + (bar_w / 2)
+
+                # Y is proportional to SoC (0-100)
+                soc_norm = point["soc"] / 100.0
+                y = graph_bottom - (soc_norm * graph_height)
+                points.append((x, y))
+
+            if len(points) > 1:
+                draw.line(points, fill="black", width=3)
+
+            # --- 6. X-Axis Timestamps ---
             try:
                 start_dt = datetime.fromisoformat(history[0]["time"])
                 start_str = start_dt.strftime("%H:%M")
                 draw.text(
-                    (20, graph_bottom + 5), start_str, font=font_small, fill="black"
+                    (margin_left, graph_bottom + 5),
+                    start_str,
+                    font=font_small,
+                    fill="black",
                 )
 
                 end_dt = datetime.fromisoformat(history[-1]["time"])
@@ -546,27 +678,15 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 try:
                     w = draw.textlength(end_str, font=font_small)
                     draw.text(
-                        (width - 20 - w, graph_bottom + 5),
+                        (width - margin_right - w, graph_bottom + 5),
                         end_str,
                         font=font_small,
                         fill="black",
                     )
                 except AttributeError:
                     draw.text(
-                        (width - 60, graph_bottom + 5),
+                        (width - margin_right - 40, graph_bottom + 5),
                         end_str,
-                        font=font_small,
-                        fill="black",
-                    )
-
-                # Middle Time
-                if len(history) > 4 * 120:
-                    mid_idx = len(history) // 2
-                    mid_dt = datetime.fromisoformat(history[mid_idx]["time"])
-                    mid_str = mid_dt.strftime("%H:%M")
-                    draw.text(
-                        (width // 2 - 20, graph_bottom + 5),
-                        mid_str,
                         font=font_small,
                         fill="black",
                     )
@@ -586,7 +706,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # 1. Sync Logic
         # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
         # OR if we are uninitialized (0.0).
-        # We REMOVED the check for 'paused' state to prevent reverting to stale car data when pausing.
         if sensor_soc is not None:
             if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
@@ -660,9 +779,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         desired_state = "charging" if should_charge else "paused"
 
         # --- MAINTENANCE MODE / PAUSED OVERRIDE ---
-        # If in maintenance mode (target reached) or explicitly paused:
-        # We ensure Switch is ON (if possible/needed for car) but Amps are 0.
-
         maintenance_active = "Maintenance mode active" in plan.get(
             "charging_summary", ""
         )
@@ -1000,10 +1116,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         except Exception:
             return "Unknown"
 
+    # ... _get_calendar_data, _get_departure_time, _generate_charging_plan same as before ...
     def _get_calendar_data(
         self, data: dict, now: datetime
     ) -> tuple[datetime | None, float | None]:
-        """Check for relevant calendar event. Returns (departure_time, target_soc)."""
         events = data.get("calendar_events", [])
         if not events:
             return None, None
@@ -1225,7 +1341,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     slot_cost = adjusted_price * kwh_this_slot
                     total_plan_cost += slot_cost
                     kwh_batt_this_slot = kwh_this_slot * efficiency
-                    soc_gain_this_slot = (kwh_batt_this_slot / self.car_capacity) * 100
+                    soc_gain_this_slot = (
+                        kwh_batt_this_slot / self.car_capacity
+                    ) * 100.0
 
                     if current_block and slot["start"] == current_block["end"]:
                         current_block["end"] = slot["end"]
