@@ -507,10 +507,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         font_text = None
         font_small = None
 
-        # Desired Sizes (Bigger)
-        s_header = 40
-        s_text = 30
-        s_small = 24
+        # Desired Sizes (Reduced by half from the large version)
+        s_header = 22
+        s_text = 16
+        s_small = 12
 
         found_path = None
 
@@ -624,15 +624,18 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if current_block:
                 charging_blocks.append(current_block)
 
-        # FIX: Increased text section base height substantially for larger fonts
-        text_section_height = 600 + (len(charging_blocks) * 60)
-        height = text_section_height + 450
+        # Height calculation for reduced font
+        # Header = ~100
+        # Lines = 5 * 25 = 125
+        # Blocks = N * 25
+        text_section_height = 350 + (len(charging_blocks) * 30)
+        height = text_section_height + 350
 
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
         # --- DRAW TEXT HEADER ---
-        y = 30
+        y = 20
         draw.text(
             (width // 2, y),
             "EV Charging Report",
@@ -640,7 +643,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             fill="black",
             anchor="mt",
         )
-        y += 80
+        y += 50
 
         lines = [
             f"Start: {report['start_time'][:16].replace('T', ' ')}",
@@ -651,37 +654,39 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         ]
 
         for line in lines:
-            draw.text((30, y), line, font=font_text, fill="black")
-            y += 50
+            draw.text((20, y), line, font=font_text, fill="black")
+            y += 25
 
-        y += 15
-        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
-        y += 30
+        y += 10
+        draw.line([(10, y), (width - 10, y)], fill="black", width=2)
+        y += 20
 
         # --- DRAW CHARGING LOG ---
         if charging_blocks:
-            draw.text((30, y), "Charging Activity:", font=font_text, fill="black")
-            y += 50
+            draw.text((20, y), "Charging Activity:", font=font_text, fill="black")
+            y += 30
             for block in charging_blocks:
                 start_dt = datetime.fromisoformat(block["start"])
                 end_dt = datetime.fromisoformat(block["end"])
                 start_str = start_dt.strftime("%H:%M")
                 end_str = end_dt.strftime("%H:%M")
                 line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
-                draw.text((40, y), line, font=font_small, fill="black")
-                y += 40
+                draw.text((30, y), line, font=font_small, fill="black")
+                y += 25
         else:
-            draw.text((30, y), "No charging recorded.", font=font_text, fill="black")
-            y += 40
+            draw.text((20, y), "No charging recorded.", font=font_text, fill="black")
+            y += 25
 
-        y += 40
+        y += 20  # Spacing before graph
 
+        # --- DRAW GRAPH ---
         if history:
             graph_top = y
-            graph_height = 300
+            graph_height = 250
             graph_bottom = graph_top + graph_height
-            margin_left = 60
-            margin_right = 60
+
+            margin_left = 50
+            margin_right = 50
             graph_draw_width = width - margin_left - margin_right
 
             prices = [p["price"] for p in history]
@@ -709,7 +714,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     outline=None,
                 )
 
-                # Active Charging Indicator
+                # Charging Block (Black overlay)
                 if point["charging"] == 1:
                     draw.rectangle(
                         [x0, graph_bottom - 20, x1, graph_bottom],
@@ -734,10 +739,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
                 label = f"{curr_mark:.1f}"
                 draw.text(
-                    (margin_left - 55, mark_y - 15),
-                    label,
-                    font=font_small,
-                    fill="black",
+                    (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
                 )
                 curr_mark += 0.5
 
@@ -763,7 +765,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
                 label = f"{soc_mark}%"
                 draw.text(
-                    (width - margin_right + 8, mark_y - 15),
+                    (width - margin_right + 8, mark_y - 7),
                     label,
                     font=font_small,
                     fill="black",
@@ -776,15 +778,16 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 soc_norm = point["soc"] / 100.0
                 y = graph_bottom - (soc_norm * graph_height)
                 points.append((x, y))
+
             if len(points) > 1:
-                draw.line(points, fill="black", width=3)
+                draw.line(points, fill="black", width=2)
 
             # X-Axis Timestamps
             try:
                 start_dt = datetime.fromisoformat(history[0]["time"])
                 start_str = start_dt.strftime("%H:%M")
                 draw.text(
-                    (margin_left, graph_bottom + 15),
+                    (margin_left, graph_bottom + 5),
                     start_str,
                     font=font_small,
                     fill="black",
@@ -795,14 +798,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 try:
                     w = draw.textlength(end_str, font=font_small)
                     draw.text(
-                        (width - margin_right - w, graph_bottom + 15),
+                        (width - margin_right - w, graph_bottom + 5),
                         end_str,
                         font=font_small,
                         fill="black",
                     )
                 except AttributeError:
                     draw.text(
-                        (width - margin_right - 60, graph_bottom + 15),
+                        (width - margin_right - 40, graph_bottom + 5),
                         end_str,
                         font=font_small,
                         fill="black",
@@ -824,6 +827,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         width = 576
         bg_color = "white"
+
+        # Load Fonts
         font_header, font_text, font_small = self._load_fonts()
 
         schedule = data.get("charging_schedule", [])
@@ -834,12 +839,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         if not valid_slots:
             return
 
-        height = 800
+        height = 650  # Adjusted height
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
         # Header
-        y = 30
+        y = 20
         draw.text(
             (width // 2, y),
             "Charging Plan",
@@ -847,7 +852,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             fill="black",
             anchor="mt",
         )
-        y += 80
+        y += 50
 
         # Extract Summary info
         summary_text = data.get("charging_summary", "")
@@ -872,18 +877,18 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         ]
 
         for line in lines:
-            draw.text((30, y), line, font=font_text, fill="black")
-            y += 50
+            draw.text((20, y), line, font=font_text, fill="black")
+            y += 25
 
+        y += 10
+        draw.line([(10, y), (width - 10, y)], fill="black", width=2)
         y += 20
-        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
-        y += 30
 
         # Graph
         graph_top = y
-        graph_height = 300
+        graph_height = 250
         graph_bottom = graph_top + graph_height
-        margin_left = 60
+        margin_left = 50
         margin_right = 20
         graph_draw_width = width - margin_left - margin_right
 
@@ -933,7 +938,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             )
             label = f"{curr_mark:.1f}"
             draw.text(
-                (margin_left - 55, mark_y - 10), label, font=font_small, fill="black"
+                (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
             )
             curr_mark += 0.5
 
@@ -941,7 +946,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         start_dt = datetime.fromisoformat(start_time)
         end_dt = datetime.fromisoformat(end_time)
         draw.text(
-            (margin_left, graph_bottom + 15),
+            (margin_left, graph_bottom + 5),
             start_dt.strftime("%H:%M"),
             font=font_small,
             fill="black",
@@ -951,14 +956,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         try:
             w = draw.textlength(end_str, font=font_small)
             draw.text(
-                (width - margin_right - w, graph_bottom + 15),
+                (width - margin_right - w, graph_bottom + 5),
                 end_str,
                 font=font_small,
                 fill="black",
             )
         except AttributeError:
             draw.text(
-                (width - margin_right - 50, graph_bottom + 15),
+                (width - margin_right - 40, graph_bottom + 5),
                 end_str,
                 font=font_small,
                 fill="black",
@@ -1508,7 +1513,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 chrono_slots = sorted(selected_slots, key=lambda x: x["start"])
                 kwh_grid_per_slot_max = est_power_kw * slot_duration_hours
                 remaining_kwh_grid = kwh_to_pull
-
                 running_soc = current_soc
                 blocks = []
                 current_block = None
