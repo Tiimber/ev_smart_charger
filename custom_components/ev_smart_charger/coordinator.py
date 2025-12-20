@@ -147,31 +147,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         )
 
     def _add_log(self, message: str):
-        """Add an entry to the action log and prune entries older than 24h."""
-        now = datetime.now()
-        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+        """Add an entry to the action log and prune old entries."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry = f"[{timestamp}] {message}"
         self.action_log.insert(0, entry)  # Prepend newest
 
-        # Prune entries older than 24 hours
-        cutoff = now - timedelta(hours=24)
-
-        # Efficiently prune from the end (oldest entries)
-        while self.action_log:
-            try:
-                last_entry = self.action_log[-1]
-                # Extract timestamp: "[YYYY-MM-DD HH:MM:SS] Message"
-                # Timestamp is between index 1 and 20
-                last_ts_str = last_entry[1:20]
-                last_dt = datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S")
-
-                if last_dt < cutoff:
-                    self.action_log.pop()
-                else:
-                    break  # Oldest entry is fresh enough, stop checking
-            except (ValueError, IndexError):
-                # Remove malformed entries
-                self.action_log.pop()
+        # Keep only last 50 events
+        if len(self.action_log) > 50:
+            self.action_log.pop()
 
         # Add to current session log if active
         if self.current_session is not None:
@@ -496,7 +479,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         width = 576
         bg_color = "white"
 
-        # Bigger Fonts (approx 50% larger)
+        # Fonts
         try:
             font_header = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
             font_text = ImageFont.truetype("DejaVuSans.ttf", 27)
@@ -528,8 +511,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if current_block:
                 charging_blocks.append(current_block)
 
-        text_section_height = 300 + (len(charging_blocks) * 45)
+        # FIX: Increased text section base height substantially
+        # Header area = ~200px
+        # Info lines (5) * 45px = ~225px
+        # Log items = blocks * 45px
+        # Footer = ~50px
+        text_section_height = 500 + (len(charging_blocks) * 50)
+
+        # Graph height = 300
+        # Bottom labels/padding = 50
         height = text_section_height + 400
+
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
@@ -718,8 +710,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         sensor_soc = data.get("car_soc")
 
         # 1. Sync Logic
-        # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
-        # OR if we are uninitialized (0.0).
         if sensor_soc is not None:
             if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
@@ -1185,20 +1175,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         final_target = max(final_target, min_guaranteed)
         plan["planned_target_soc"] = final_target
-
-        # FIX: Check for 0% SoC to avoid panic charging on initialization
-        current_soc = data.get("car_soc")
-        if current_soc is None or current_soc <= 0.0:
-            plan["should_charge_now"] = False
-            plan["charging_summary"] = (
-                "Waiting for valid Car SoC (Current: 0% or Unknown)."
-            )
-            if not data.get("car_plugged"):
-                plan["should_charge_now"] = False
-            return plan
-
-        # Ensure we work with float for calculations
-        current_soc = float(current_soc)
+        current_soc = data.get("car_soc", 0) or 0.0
 
         selected_slots = []
         selected_start_times = set()
@@ -1326,10 +1303,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 for b in blocks:
                     start_s = b["soc_start"]
                     end_s = min(100, start_s + b["soc_gain"])
-                    # Clamp end_s to final_target if it slightly exceeds due to math
                     if end_s > final_target:
                         end_s = final_target
-
                     avg_p = b["avg_price_acc"] / b["count"]
                     line = (
                         f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
