@@ -30,6 +30,9 @@ from .const import (
     CONF_CAR_CHARGING_LEVEL_ENTITY,
     CONF_CAR_LIMIT_SERVICE,
     CONF_CAR_LIMIT_ENTITY_ID,
+    CONF_CAR_REFRESH_ACTION,
+    CONF_CAR_REFRESH_ENTITY,
+    CONF_CAR_REFRESH_INTERVAL,
     CONF_PRICE_SENSOR,
     CONF_P1_L1,
     CONF_P1_L2,
@@ -46,6 +49,13 @@ from .const import (
     CONF_CHARGER_CURRENT_L2,
     CONF_CHARGER_CURRENT_L3,
     DEFAULT_CURRENCY,
+    REFRESH_NEVER,
+    REFRESH_30_MIN,
+    REFRESH_1_HOUR,
+    REFRESH_2_HOURS,
+    REFRESH_3_HOURS,
+    REFRESH_4_HOURS,
+    REFRESH_AT_TARGET,
     # Entity Keys
     ENTITY_TARGET_SOC,
     ENTITY_MIN_SOC,
@@ -89,6 +99,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # Scheduling state
         self._last_scheduled_end = None  # Track end of planned charging for buffer
+
+        # Refresh Logic
+        self._last_car_refresh_time = None
+        self._refresh_trigger_timestamp = None
+        self._soc_before_refresh = None
 
         # State tracking to prevent API spamming
         self._last_applied_amps = -1
@@ -137,6 +152,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "ch_l1": get_conf(CONF_CHARGER_CURRENT_L1),
             "ch_l2": get_conf(CONF_CHARGER_CURRENT_L2),
             "ch_l3": get_conf(CONF_CHARGER_CURRENT_L3),
+            # Refresh
+            "refresh_svc": get_conf(CONF_CAR_REFRESH_ACTION),
+            "refresh_ent": get_conf(CONF_CAR_REFRESH_ENTITY),
+            "refresh_int": get_conf(CONF_CAR_REFRESH_INTERVAL),
         }
 
         super().__init__(
@@ -152,9 +171,19 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         entry = f"[{timestamp}] {message}"
         self.action_log.insert(0, entry)  # Prepend newest
 
-        # Keep only last 50 events
-        if len(self.action_log) > 50:
-            self.action_log.pop()
+        # Keep only last 24h events
+        cutoff = datetime.now() - timedelta(hours=24)
+        while self.action_log:
+            try:
+                last_entry = self.action_log[-1]
+                last_ts_str = last_entry[1:20]
+                last_dt = datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S")
+                if last_dt < cutoff:
+                    self.action_log.pop()
+                else:
+                    break
+            except (ValueError, IndexError):
+                self.action_log.pop()
 
         # Add to current session log if active
         if self.current_session is not None:
@@ -350,10 +379,13 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             plan = self._generate_charging_plan(data)
             data.update(plan)
 
-            # 9. ACTUATION: Apply logic to physical charger AND car
+            # 9. Manage Car Refresh
+            await self._manage_car_refresh(data, plan)
+
+            # 10. ACTUATION: Apply logic to physical charger AND car
             await self._apply_charger_control(data, plan)
 
-            # 10. SESSION RECORDING: Record current status
+            # 11. SESSION RECORDING: Record current status
             self._record_session_data(data)
 
             # Attach log to data so Sensor can read it
@@ -365,633 +397,86 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"Error in EV Coordinator: {err}")
             raise UpdateFailed(f"Error communicating with API: {err}")
 
-    def _record_session_data(self, data: dict):
-        """Record data points for the current session report."""
-        if not self.current_session:
+    async def _manage_car_refresh(self, data: dict, plan: dict):
+        """Handle force refreshing car sensors."""
+        if not data.get("car_plugged"):
+            return  # Only refresh when plugged in
+
+        svc = self.conf_keys.get("refresh_svc")
+        ent = self.conf_keys.get("refresh_ent")
+        interval_mode = self.conf_keys.get("refresh_int", REFRESH_NEVER)
+
+        if not svc or not ent or interval_mode == REFRESH_NEVER:
             return
 
-        now_ts = datetime.now()
+        now = datetime.now()
 
-        # Calculate current cost
-        current_price = 0.0
+        # Determine duration since last refresh
+        if self._last_car_refresh_time:
+            delta = now - self._last_car_refresh_time
+        else:
+            delta = timedelta(days=365)  # Needs refresh
+
+        should_refresh = False
+
+        # Check Intervals
+        if interval_mode == REFRESH_30_MIN and delta > timedelta(minutes=30):
+            should_refresh = True
+        elif interval_mode == REFRESH_1_HOUR and delta > timedelta(hours=1):
+            should_refresh = True
+        elif interval_mode == REFRESH_2_HOURS and delta > timedelta(hours=2):
+            should_refresh = True
+        elif interval_mode == REFRESH_3_HOURS and delta > timedelta(hours=3):
+            should_refresh = True
+        elif interval_mode == REFRESH_4_HOURS and delta > timedelta(hours=4):
+            should_refresh = True
+
+        # Check Target Logic
+        if interval_mode == REFRESH_AT_TARGET:
+            # Refresh if we think we hit target, to confirm.
+            # Limit to once every 12 hours.
+            if delta > timedelta(hours=12):
+                current_soc = self._virtual_soc
+                target_soc = float(plan.get("planned_target_soc", 80))
+                # If we are close or above target
+                if current_soc >= target_soc:
+                    should_refresh = True
+
+        if should_refresh:
+            await self._trigger_car_refresh(svc, ent)
+
+    async def _trigger_car_refresh(self, service: str, entity_id: str):
+        """Call the refresh service."""
         try:
-            raw_prices = data["price_data"].get("today", [])
-            if raw_prices:
-                count = len(raw_prices)
-                idx = (
-                    (now_ts.hour * 4) + (now_ts.minute // 15)
-                    if count > 25
-                    else now_ts.hour
-                )
-                idx = min(idx, count - 1)
-                current_price = float(raw_prices[idx])
-        except:
-            current_price = 0.0
-
-        # Fees/VAT
-        extra_fee = data.get(ENTITY_PRICE_EXTRA_FEE, 0.0)
-        vat_pct = data.get(ENTITY_PRICE_VAT, 0.0)
-        adjusted_price = (current_price + extra_fee) * (1 + vat_pct / 100.0)
-
-        # Detect charging status (capture slivers)
-        # Charging is considered TRUE if state is charging OR if we saw it active since last tick
-        is_charging = (
-            1
-            if (
-                self._last_applied_state == "charging" or self._was_charging_in_interval
+            # Note the current (potentially stale) value before refreshing
+            current_soc_state = self.hass.states.get(self.conf_keys["car_soc"])
+            current_val = (
+                float(current_soc_state.state)
+                if current_soc_state
+                and current_soc_state.state not in [STATE_UNAVAILABLE, STATE_UNKNOWN]
+                else 0.0
             )
-            else 0
-        )
 
-        point = {
-            "time": now_ts.isoformat(),
-            "soc": data.get("car_soc", 0),
-            "amps": self._last_applied_amps,
-            "charging": is_charging,
-            "price": adjusted_price,
-        }
+            self._soc_before_refresh = current_val
 
-        self.current_session["history"].append(point)
-        # Reset the inter-tick memory
-        self._was_charging_in_interval = False
-
-    def _finalize_session(self):
-        """Generate the final report for the ended session."""
-        if not self.current_session:
-            return
-
-        report = self._calculate_session_totals()
-
-        self.last_session_data = report
-        self._save_data()
-
-        # GENERATE IMAGE FOR THERMAL PRINTER
-        try:
-            save_path = self.hass.config.path(
-                "www", "ev_smart_charger_last_session.png"
+            self._add_log(
+                f"Forcing Car Sensor Refresh via {service} (Current: {current_val}%)"
             )
-            self.hass.async_add_executor_job(
-                self._generate_report_image, report, save_path
-            )
+            domain, name = service.split(".", 1)
+
+            payload = {}
+            if "." in entity_id:
+                payload["entity_id"] = entity_id
+            else:
+                payload["device_id"] = entity_id
+
+            await self.hass.services.async_call(domain, name, payload, blocking=True)
+
+            self._last_car_refresh_time = datetime.now()
+            self._refresh_trigger_timestamp = datetime.now()  # Mark for trust logic
+
         except Exception as e:
-            _LOGGER.warning(f"Could not trigger image generation: {e}")
-
-    def _calculate_session_totals(self):
-        """Calculate totals for the current session."""
-        history = self.current_session["history"]
-        if not history:
-            return {}
-
-        start_soc = history[0]["soc"]
-        end_soc = history[-1]["soc"]
-
-        total_kwh = 0.0
-        total_cost = 0.0
-
-        prev_time = datetime.fromisoformat(history[0]["time"])
-
-        for i in range(1, len(history)):
-            curr = history[i]
-            curr_time = datetime.fromisoformat(curr["time"])
-            delta_h = (curr_time - prev_time).total_seconds() / 3600.0
-            prev_time = curr_time
-
-            amps = history[i - 1]["amps"]
-            is_charging = history[i - 1]["charging"]
-
-            if is_charging and amps > 0:
-                power = (3 * 230 * amps) / 1000.0
-                kwh = power * delta_h
-                cost = kwh * history[i - 1]["price"]
-
-                total_kwh += kwh
-                total_cost += cost
-
-        return {
-            "start_time": self.current_session["start_time"],
-            "end_time": datetime.now().isoformat(),
-            "start_soc": start_soc,
-            "end_soc": end_soc,
-            "added_kwh": round(total_kwh, 2),
-            "total_cost": round(total_cost, 2),
-            "currency": self.currency,
-            "graph_data": history,
-            "session_log": self.current_session["log"],
-        }
-
-    def _load_fonts(self):
-        """Helper to load standard fonts with fallbacks."""
-        from PIL import ImageFont
-
-        # Get component directory for bundled fonts
-        component_dir = os.path.dirname(__file__)
-
-        # Paths to try for TrueType fonts
-        font_candidates = [
-            # 1. Bundled Font (Best for Nabu Casa / Docker)
-            os.path.join(component_dir, "DejaVuSans.ttf"),
-            # 2. System Paths
-            "DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf",  # Alpine default
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-            "/usr/share/fonts/freefont/FreeSansBold.ttf",
-            "arial.ttf",
-        ]
-
-        font_header = None
-        font_text = None
-        font_small = None
-
-        # Desired Sizes (Updated: ~20% increase from original tiny sizes)
-        # Original: 22, 16, 12
-        # Increased: 26, 19, 14
-        s_header = 26
-        s_text = 19
-        s_small = 14
-
-        found_path = None
-
-        # 1. Try specific candidates
-        for path in font_candidates:
-            if os.path.exists(path):
-                found_path = path
-                break
-            # Also try checking via PIL if name is resolved (for system fonts not using full path)
-            try:
-                ImageFont.truetype(path, s_header)
-                found_path = path
-                break
-            except OSError:
-                continue
-
-        # 2. Fallback: Search common directories if nothing found
-        if not found_path:
-            search_dirs = [
-                "/usr/share/fonts",
-                "/usr/local/share/fonts",
-                "/root/.local/share/fonts",
-            ]
-            for search_dir in search_dirs:
-                if not os.path.isdir(search_dir):
-                    continue
-                for root, _, files in os.walk(search_dir):
-                    for file in files:
-                        if file.lower().endswith(".ttf"):
-                            # Prefer bold sans
-                            if "bold" in file.lower() and "sans" in file.lower():
-                                found_path = os.path.join(root, file)
-                                break
-                            if "bold" in file.lower() and not found_path:
-                                found_path = os.path.join(root, file)
-                    if found_path:
-                        break
-                if found_path:
-                    break
-
-        # Load if found
-        if found_path:
-            try:
-                _LOGGER.debug(f"Loading font from: {found_path}")
-                font_header = ImageFont.truetype(found_path, s_header)
-
-                # Try to find regular version for text
-                reg_path = found_path
-                # Simple heuristic to find non-bold
-                if "Bold" in found_path:
-                    try_reg = found_path.replace("Bold", "").replace("bold", "")
-                    if os.path.exists(try_reg):
-                        reg_path = try_reg
-                    elif os.path.exists(try_reg.replace("..", ".")):
-                        reg_path = try_reg.replace("..", ".")
-
-                try:
-                    font_text = ImageFont.truetype(reg_path, s_text)
-                    font_small = ImageFont.truetype(reg_path, s_small)
-                except OSError:
-                    font_text = ImageFont.truetype(found_path, s_text)
-                    font_small = ImageFont.truetype(found_path, s_small)
-
-            except OSError as e:
-                _LOGGER.warning(f"Error loading font {found_path}: {e}")
-                font_header = None
-
-        if not font_header:
-            _LOGGER.warning(
-                f"Could not load TrueType fonts. Checked paths and search. Using Pillow default (tiny)."
-            )
-            font_header = ImageFont.load_default()
-            font_text = ImageFont.load_default()
-            font_small = ImageFont.load_default()
-
-        return font_header, font_text, font_small
-
-    def _generate_report_image(self, report: dict, file_path: str):
-        """Generate a PNG image for thermal printers."""
-        try:
-            from PIL import Image, ImageDraw
-        except ImportError:
-            _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
-            return
-
-        width = 576
-        bg_color = "white"
-
-        # Load fonts via helper
-        font_header, font_text, font_small = self._load_fonts()
-
-        # Calculate Text Summary Section Height
-        history = report.get("graph_data", [])
-        charging_blocks = []
-        if history:
-            current_block = None
-            for i, point in enumerate(history):
-                if point["charging"] == 1:
-                    if current_block is None:
-                        current_block = {
-                            "start": point["time"],
-                            "soc_start": point["soc"],
-                            "soc_end": point["soc"],
-                        }
-                    current_block["soc_end"] = point["soc"]
-                    current_block["end"] = point["time"]
-                else:
-                    if current_block:
-                        charging_blocks.append(current_block)
-                        current_block = None
-            if current_block:
-                charging_blocks.append(current_block)
-
-        # FIX: Tighter height calculation to remove excessive whitespace
-        # Header (110) + Info (180) + Divider (20) + LogHeader (40) = ~350 base
-        # Blocks: N * 35
-        # Graph area (Graph 250 + Labels 15 + Pad 20) = ~285
-        # Pre-graph gap = 40
-        # Total = 350 + N*35 + 40 + 285 = 675 + N*35
-
-        base_height = 360  # Header + Info section
-        log_height = (
-            (len(charging_blocks) * 40) if charging_blocks else 40
-        )  # Log lines or "No charging" message
-        graph_area_height = 330  # Gap + Graph + Labels
-
-        height = base_height + log_height + graph_area_height
-
-        img = Image.new("RGB", (width, height), bg_color)
-        draw = ImageDraw.Draw(img)
-
-        # --- DRAW TEXT HEADER ---
-        y = 30
-        draw.text(
-            (width // 2, y),
-            "EV Charging Report",
-            font=font_header,
-            fill="black",
-            anchor="mt",
-        )
-        y += 70
-
-        lines = [
-            f"Start: {report['start_time'][:16].replace('T', ' ')}",
-            f"End:   {report['end_time'][:16].replace('T', ' ')}",
-            f"Power: {report['added_kwh']} kWh",
-            f"Cost:  {report['total_cost']} {report['currency']}",
-            f"SoC:   {int(report['start_soc'])}% -> {int(report['end_soc'])}%",
-        ]
-
-        for line in lines:
-            draw.text((30, y), line, font=font_text, fill="black")
-            y += 35
-
-        y += 10
-        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
-        y += 20
-
-        # --- DRAW CHARGING LOG ---
-        if charging_blocks:
-            draw.text((30, y), "Charging Activity:", font=font_text, fill="black")
-            y += 40
-            for block in charging_blocks:
-                start_dt = datetime.fromisoformat(block["start"])
-                end_dt = datetime.fromisoformat(block["end"])
-                start_str = start_dt.strftime("%H:%M")
-                end_str = end_dt.strftime("%H:%M")
-                line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
-                draw.text((40, y), line, font=font_small, fill="black")
-                y += 40
-        else:
-            draw.text((30, y), "No charging recorded.", font=font_text, fill="black")
-            y += 40
-
-        y += 20  # Spacing before graph
-
-        # --- DRAW GRAPH ---
-        if history:
-            graph_top = y
-            graph_height = 250
-            graph_bottom = graph_top + graph_height
-
-            margin_left = 60
-            margin_right = 60
-            graph_draw_width = width - margin_left - margin_right
-
-            prices = [p["price"] for p in history]
-            min_p = min(prices) if prices else 0
-            max_p = max(prices) if prices else 1
-            axis_min_p = math.floor(min_p * 2) / 2
-            axis_max_p = math.ceil(max_p * 2) / 2
-            if axis_max_p == axis_min_p:
-                axis_max_p += 0.5
-            price_range = axis_max_p - axis_min_p
-
-            count = len(history)
-            bar_w_float = graph_draw_width / max(1, count)
-
-            for i, point in enumerate(history):
-                x0 = margin_left + (i * bar_w_float)
-                x1 = margin_left + ((i + 1) * bar_w_float)
-
-                # Price Bar (Gray)
-                p_norm = (point["price"] - axis_min_p) / price_range
-                p_h = p_norm * graph_height
-                draw.rectangle(
-                    [x0, graph_bottom - p_h, x1, graph_bottom],
-                    fill="#e0e0e0",
-                    outline=None,
-                )
-
-                # Active Charging Indicator
-                if point["charging"] == 1:
-                    draw.rectangle(
-                        [x0, graph_bottom - 20, x1, graph_bottom],
-                        fill="black",
-                        outline=None,
-                    )
-
-            # Left Axis (Price)
-            draw.line(
-                [(margin_left, graph_top), (margin_left, graph_bottom)],
-                fill="black",
-                width=2,
-            )
-            curr_mark = axis_min_p
-            while curr_mark <= axis_max_p + 0.01:
-                norm = (curr_mark - axis_min_p) / price_range
-                mark_y = graph_bottom - (norm * graph_height)
-                draw.line(
-                    [(margin_left - 5, mark_y), (margin_left, mark_y)],
-                    fill="black",
-                    width=1,
-                )
-                label = f"{curr_mark:.1f}"
-                draw.text(
-                    (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
-                )
-                curr_mark += 0.5
-
-            # Right Axis (SoC)
-            draw.line(
-                [
-                    (width - margin_right, graph_top),
-                    (width - margin_right, graph_bottom),
-                ],
-                fill="black",
-                width=2,
-            )
-            for soc_mark in [0, 20, 40, 60, 80, 100]:
-                norm = soc_mark / 100.0
-                mark_y = graph_bottom - (norm * graph_height)
-                draw.line(
-                    [
-                        (width - margin_right, mark_y),
-                        (width - margin_right + 5, mark_y),
-                    ],
-                    fill="black",
-                    width=1,
-                )
-                label = f"{soc_mark}%"
-                draw.text(
-                    (width - margin_right + 8, mark_y - 7),
-                    label,
-                    font=font_small,
-                    fill="black",
-                )
-
-            # SoC Line (Black)
-            points = []
-            for i, point in enumerate(history):
-                x = margin_left + (i * bar_w_float) + (bar_w_float / 2)
-                soc_norm = point["soc"] / 100.0
-                y = graph_bottom - (soc_norm * graph_height)
-                points.append((x, y))
-
-            if len(points) > 1:
-                draw.line(points, fill="black", width=2)
-
-            # X-Axis Timestamps
-            try:
-                start_dt = datetime.fromisoformat(history[0]["time"])
-                start_str = start_dt.strftime("%H:%M")
-                draw.text(
-                    (margin_left, graph_bottom + 5),
-                    start_str,
-                    font=font_small,
-                    fill="black",
-                )
-
-                end_dt = datetime.fromisoformat(history[-1]["time"])
-                end_str = end_dt.strftime("%H:%M")
-                try:
-                    w = draw.textlength(end_str, font=font_small)
-                    draw.text(
-                        (width - margin_right - w, graph_bottom + 5),
-                        end_str,
-                        font=font_small,
-                        fill="black",
-                    )
-                except AttributeError:
-                    draw.text(
-                        (width - margin_right - 50, graph_bottom + 5),
-                        end_str,
-                        font=font_small,
-                        fill="black",
-                    )
-            except Exception:
-                pass
-
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        img.save(file_path)
-        _LOGGER.info(f"Saved session image to {file_path}")
-
-    def _generate_plan_image(self, data: dict, file_path: str):
-        """Generate a PNG image for the future charging plan."""
-        try:
-            from PIL import Image, ImageDraw
-        except ImportError:
-            _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
-            return
-
-        width = 576
-        bg_color = "white"
-
-        # Load Fonts
-        font_header, font_text, font_small = self._load_fonts()
-
-        schedule = data.get("charging_schedule", [])
-        if not schedule:
-            return
-
-        valid_slots = [s for s in schedule if s["price"] is not None]
-        if not valid_slots:
-            return
-
-        height = 650  # Adjusted height
-        img = Image.new("RGB", (width, height), bg_color)
-        draw = ImageDraw.Draw(img)
-
-        # Header
-        y = 30
-        draw.text(
-            (width // 2, y),
-            "Charging Plan",
-            font=font_header,
-            fill="black",
-            anchor="mt",
-        )
-        y += 80
-
-        # Extract Summary info
-        summary_text = data.get("charging_summary", "")
-        cost_match = re.search(
-            r"Total Estimated Cost:\*\* ([\d\.]+) (\w+)", summary_text
-        )
-        cost_str = (
-            f"{cost_match.group(1)} {cost_match.group(2)}" if cost_match else "N/A"
-        )
-
-        start_time = valid_slots[0]["start"]
-        end_time = valid_slots[-1]["end"]
-        start_dt = datetime.fromisoformat(start_time)
-        end_dt = datetime.fromisoformat(end_time)
-
-        current_soc = data.get("car_soc", 0)
-        target_soc = data.get("planned_target_soc", 0)
-
-        # Logic to hide "range" if target already reached
-        if int(current_soc) >= int(target_soc):
-            soc_line = f"SoC:   {int(current_soc)}% (Target Reached)"
-        else:
-            soc_line = f"SoC:   {int(current_soc)}% -> {int(target_soc)}%"
-
-        # Format: DD/MM HH:MM
-        s_fmt = start_dt.strftime("%d/%m %H:%M")
-        e_fmt = end_dt.strftime("%d/%m %H:%M")
-
-        lines = [
-            f"Plan:  {s_fmt} -> {e_fmt}",
-            soc_line,
-            f"Est Cost: {cost_str}",
-            f"State: {data.get('current_price_status', 'Unknown')}",
-        ]
-
-        for line in lines:
-            draw.text((30, y), line, font=font_text, fill="black")
-            y += 35
-
-        y += 20
-        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
-        y += 30
-
-        # Graph
-        graph_top = y
-        graph_height = 250
-        graph_bottom = graph_top + graph_height
-        margin_left = 60
-        margin_right = 20
-        graph_draw_width = width - margin_left - margin_right
-
-        prices = [s["price"] for s in valid_slots]
-        min_p = min(prices)
-        max_p = max(prices)
-        axis_min_p = math.floor(min_p * 2) / 2
-        axis_max_p = math.ceil(max_p * 2) / 2
-        if axis_max_p == axis_min_p:
-            axis_max_p += 0.5
-        price_range = axis_max_p - axis_min_p
-
-        count = len(valid_slots)
-        bar_w_float = graph_draw_width / max(1, count)
-
-        for i, slot in enumerate(valid_slots):
-            x0 = margin_left + (i * bar_w_float)
-            x1 = margin_left + ((i + 1) * bar_w_float)
-
-            p_norm = (slot["price"] - axis_min_p) / price_range
-            p_h = p_norm * graph_height
-            draw.rectangle(
-                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#e0e0e0", outline=None
-            )
-
-            if slot["active"]:
-                draw.rectangle(
-                    [x0, graph_bottom - 20, x1, graph_bottom],
-                    fill="black",
-                    outline=None,
-                )
-
-        # Left Axis
-        draw.line(
-            [(margin_left, graph_top), (margin_left, graph_bottom)],
-            fill="black",
-            width=2,
-        )
-        curr_mark = axis_min_p
-        while curr_mark <= axis_max_p + 0.01:
-            norm = (curr_mark - axis_min_p) / price_range
-            mark_y = graph_bottom - (norm * graph_height)
-            draw.line(
-                [(margin_left - 5, mark_y), (margin_left, mark_y)],
-                fill="black",
-                width=1,
-            )
-            label = f"{curr_mark:.1f}"
-            draw.text(
-                (margin_left - 55, mark_y - 10), label, font=font_small, fill="black"
-            )
-            curr_mark += 0.5
-
-        # X-Axis Labels
-        draw.text(
-            (margin_left, graph_bottom + 15),
-            start_dt.strftime("%H:%M"),
-            font=font_small,
-            fill="black",
-        )
-
-        end_str = end_dt.strftime("%H:%M")
-        try:
-            w = draw.textlength(end_str, font=font_small)
-            draw.text(
-                (width - margin_right - w, graph_bottom + 15),
-                end_str,
-                font=font_small,
-                fill="black",
-            )
-        except AttributeError:
-            draw.text(
-                (width - margin_right - 50, graph_bottom + 15),
-                end_str,
-                font=font_small,
-                fill="black",
-            )
-
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        img.save(file_path)
-        _LOGGER.info(f"Saved plan image to {file_path}")
+            _LOGGER.error(f"Failed to force refresh car: {e}")
 
     def _update_virtual_soc(self, data: dict):
         """Update the internal estimated SoC based on charging activity."""
@@ -999,36 +484,69 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         sensor_soc = data.get("car_soc")
 
         # 1. Sync Logic
+        # Sync if sensor is valid AND:
+        #  - Higher than estimate (drift correction upwards)
+        #  - OR we are uninitialized (0.0)
+        #  - OR we triggered a refresh recently (trust sensor for 5 mins, even if lower, BUT only if it changed)
+        trust_sensor_period = False
+        if self._refresh_trigger_timestamp:
+            if (current_time - self._refresh_trigger_timestamp) < timedelta(minutes=5):
+                # Trust the sensor if it has updated to a NEW value
+                if (
+                    sensor_soc is not None
+                    and float(sensor_soc) != self._soc_before_refresh
+                ):
+                    trust_sensor_period = True
+
         if sensor_soc is not None:
-            if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
+            if (
+                sensor_soc > self._virtual_soc
+                or self._virtual_soc == 0.0
+                or trust_sensor_period
+            ):
                 self._virtual_soc = float(sensor_soc)
 
         # 2. Estimate Logic
+        # Only estimate if we are ACTIVELY charging
         if self._last_applied_state == "charging":
+            # Use Real Charger Current if available (More accurate than Target Amps)
             ch_l1 = data.get("ch_l1", 0.0)
             ch_l2 = data.get("ch_l2", 0.0)
             ch_l3 = data.get("ch_l3", 0.0)
             measured_amps = max(ch_l1, ch_l2, ch_l3)
 
+            # Fallback to Target Amps if no sensor or sensor reads 0 while active
             used_amps = (
                 measured_amps if measured_amps > 0.5 else self._last_applied_amps
             )
 
             if used_amps > 0:
+                # Calculate time delta in hours
                 seconds_passed = (current_time - self._last_update_time).total_seconds()
                 hours_passed = seconds_passed / 3600.0
+
+                # Estimate Power (3-phase 230V standard)
+                # P (kW) = 3 * 230V * Amps / 1000
                 estimated_power_kw = (3 * 230 * used_amps) / 1000.0
+
+                # Efficiency Factor
                 efficiency_pct = self.entry.data.get(CONF_CHARGER_LOSS, 10.0)
                 efficiency_factor = 1.0 - (efficiency_pct / 100.0)
+
+                # Energy to Battery
                 added_kwh = estimated_power_kw * hours_passed * efficiency_factor
 
+                # Convert to % SoC
                 if self.car_capacity > 0:
                     added_percent = (added_kwh / self.car_capacity) * 100.0
                     self._virtual_soc += added_percent
 
+                    # Cap at Physical Car Limit (if we know it)
                     if self._last_applied_car_limit > 0:
                         if self._virtual_soc > self._last_applied_car_limit:
                             self._virtual_soc = float(self._last_applied_car_limit)
+
+                    # Absolute Cap at 100
                     if self._virtual_soc > 100.0:
                         self._virtual_soc = 100.0
 
@@ -1037,9 +555,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
     async def _apply_charger_control(self, data: dict, plan: dict):
         """Send commands to the Zaptec entities and Car."""
 
+        # 0. Startup Grace Period Check
         if datetime.now() - self._startup_time < timedelta(minutes=2):
             return
 
+        # 1. Determine Desired State
         should_charge = data.get("should_charge_now", False)
         safe_amps = math.floor(data.get("max_available_current", 0))
 
@@ -1053,11 +573,13 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         target_amps = safe_amps if should_charge else 0
         desired_state = "charging" if should_charge else "paused"
 
+        # --- MAINTENANCE MODE / PAUSED OVERRIDE ---
         maintenance_active = "Maintenance mode active" in plan.get(
             "charging_summary", ""
         )
 
         if maintenance_active:
+            # FORCE: Switch ON, Amps 0
             should_charge = True
             target_amps = 0
             desired_state = "maintenance"
@@ -1102,9 +624,13 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # 3. Control Start/Stop
         if should_charge:
+            # ---> CHARGING / MAINTENANCE SEQUENCE <---
+
+            # Only record active charging logic for slivers if Amps > 0
             if target_amps > 0:
                 self._was_charging_in_interval = True
 
+            # A. Ensure Switch is ON
             if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):
@@ -1130,6 +656,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 except Exception as e:
                     _LOGGER.error(f"Failed to switch Zaptec state to CHARGING: {e}")
 
+            # B. Control Current Limiter
             if target_amps != self._last_applied_amps and self.conf_keys["zap_limit"]:
                 try:
                     await self.hass.services.async_call(
@@ -1150,6 +677,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.error(f"Failed to set Zaptec limit: {e}")
 
         else:
+            # ---> PAUSING SEQUENCE <---
+
+            # A. Set Amps to 0 first (Soft Stop)
             if self._last_applied_amps != 0 and self.conf_keys["zap_limit"]:
                 try:
                     await self.hass.services.async_call(
@@ -1163,6 +693,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Zaptec limit to 0: {e}")
 
+            # B. Turn Switch OFF
             if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):
@@ -1533,7 +1064,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 chrono_slots = sorted(selected_slots, key=lambda x: x["start"])
                 kwh_grid_per_slot_max = est_power_kw * slot_duration_hours
                 remaining_kwh_grid = kwh_to_pull
-
                 running_soc = current_soc
                 blocks = []
                 current_block = None
@@ -1585,10 +1115,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 for b in blocks:
                     start_s = b["soc_start"]
                     end_s = min(100, start_s + b["soc_gain"])
-                    # Clamp end_s to final_target if it slightly exceeds due to math
                     if end_s > final_target:
                         end_s = final_target
-
                     avg_p = b["avg_price_acc"] / b["count"]
                     line = (
                         f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
@@ -1632,3 +1160,395 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         if not data.get("car_plugged"):
             plan["should_charge_now"] = False
         return plan
+
+    def _generate_report_image(self, report: dict, file_path: str):
+        """Generate a PNG image for thermal printers."""
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
+            return
+
+        width = 576
+        bg_color = "white"
+
+        # Load fonts via helper
+        font_header, font_text, font_small = self._load_fonts()
+
+        # Calculate Text Summary Section Height
+        history = report.get("graph_data", [])
+        charging_blocks = []
+        if history:
+            current_block = None
+            for i, point in enumerate(history):
+                if point["charging"] == 1:
+                    if current_block is None:
+                        current_block = {
+                            "start": point["time"],
+                            "soc_start": point["soc"],
+                            "soc_end": point["soc"],
+                        }
+                    current_block["soc_end"] = point["soc"]
+                    current_block["end"] = point["time"]
+                else:
+                    if current_block:
+                        charging_blocks.append(current_block)
+                        current_block = None
+            if current_block:
+                charging_blocks.append(current_block)
+
+        # FIX: Increased text section base height substantially for larger fonts
+        text_section_height = 600 + (len(charging_blocks) * 35)
+        height = text_section_height + 400
+
+        img = Image.new("RGB", (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+
+        # --- DRAW TEXT HEADER ---
+        y = 30
+        draw.text(
+            (width // 2, y),
+            "EV Charging Report",
+            font=font_header,
+            fill="black",
+            anchor="mt",
+        )
+        y += 70
+
+        lines = [
+            f"Start: {report['start_time'][:16].replace('T', ' ')}",
+            f"End:   {report['end_time'][:16].replace('T', ' ')}",
+            f"Power: {report['added_kwh']} kWh",
+            f"Cost:  {report['total_cost']} {report['currency']}",
+            f"SoC:   {int(report['start_soc'])}% -> {int(report['end_soc'])}%",
+        ]
+
+        for line in lines:
+            draw.text((30, y), line, font=font_text, fill="black")
+            y += 35
+
+        y += 15
+        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
+        y += 30
+
+        # --- DRAW CHARGING LOG ---
+        if charging_blocks:
+            draw.text((30, y), "Charging Activity:", font=font_text, fill="black")
+            y += 40
+            for block in charging_blocks:
+                start_dt = datetime.fromisoformat(block["start"])
+                end_dt = datetime.fromisoformat(block["end"])
+                start_str = start_dt.strftime("%H:%M")
+                end_str = end_dt.strftime("%H:%M")
+                line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
+                draw.text((40, y), line, font=font_small, fill="black")
+                y += 30
+        else:
+            draw.text((30, y), "No charging recorded.", font=font_text, fill="black")
+            y += 40
+
+        y += 20  # Spacing before graph
+
+        # --- DRAW GRAPH ---
+        if history:
+            graph_top = y
+            graph_height = 250
+            graph_bottom = graph_top + graph_height
+
+            margin_left = 60
+            margin_right = 60
+            graph_draw_width = width - margin_left - margin_right
+
+            prices = [p["price"] for p in history]
+            min_p = min(prices) if prices else 0
+            max_p = max(prices) if prices else 1
+            axis_min_p = math.floor(min_p * 2) / 2
+            axis_max_p = math.ceil(max_p * 2) / 2
+            if axis_max_p == axis_min_p:
+                axis_max_p += 0.5
+            price_range = axis_max_p - axis_min_p
+
+            count = len(history)
+            bar_w_float = graph_draw_width / max(1, count)
+
+            for i, point in enumerate(history):
+                x0 = margin_left + (i * bar_w_float)
+                x1 = margin_left + ((i + 1) * bar_w_float)
+
+                # Price Bar (Gray)
+                p_norm = (point["price"] - axis_min_p) / price_range
+                p_h = p_norm * graph_height
+                draw.rectangle(
+                    [x0, graph_bottom - p_h, x1, graph_bottom],
+                    fill="#e0e0e0",
+                    outline=None,
+                )
+
+                # Active Charging Indicator
+                if point["charging"] == 1:
+                    draw.rectangle(
+                        [x0, graph_bottom - 20, x1, graph_bottom],
+                        fill="black",
+                        outline=None,
+                    )
+
+            # Left Axis (Price)
+            draw.line(
+                [(margin_left, graph_top), (margin_left, graph_bottom)],
+                fill="black",
+                width=2,
+            )
+            curr_mark = axis_min_p
+            while curr_mark <= axis_max_p + 0.01:
+                norm = (curr_mark - axis_min_p) / price_range
+                mark_y = graph_bottom - (norm * graph_height)
+                draw.line(
+                    [(margin_left - 5, mark_y), (margin_left, mark_y)],
+                    fill="black",
+                    width=1,
+                )
+                label = f"{curr_mark:.1f}"
+                draw.text(
+                    (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
+                )
+                curr_mark += 0.5
+
+            # Right Axis (SoC)
+            draw.line(
+                [
+                    (width - margin_right, graph_top),
+                    (width - margin_right, graph_bottom),
+                ],
+                fill="black",
+                width=2,
+            )
+            for soc_mark in [0, 20, 40, 60, 80, 100]:
+                norm = soc_mark / 100.0
+                mark_y = graph_bottom - (norm * graph_height)
+                draw.line(
+                    [
+                        (width - margin_right, mark_y),
+                        (width - margin_right + 5, mark_y),
+                    ],
+                    fill="black",
+                    width=1,
+                )
+                label = f"{soc_mark}%"
+                draw.text(
+                    (width - margin_right + 8, mark_y - 7),
+                    label,
+                    font=font_small,
+                    fill="black",
+                )
+
+            # SoC Line (Black)
+            points = []
+            for i, point in enumerate(history):
+                x = margin_left + (i * bar_w_float) + (bar_w_float / 2)
+                soc_norm = point["soc"] / 100.0
+                y = graph_bottom - (soc_norm * graph_height)
+                points.append((x, y))
+
+            if len(points) > 1:
+                draw.line(points, fill="black", width=2)
+
+            # X-Axis Timestamps
+            try:
+                start_dt = datetime.fromisoformat(history[0]["time"])
+                start_str = start_dt.strftime("%H:%M")
+                draw.text(
+                    (margin_left, graph_bottom + 15),
+                    start_str,
+                    font=font_small,
+                    fill="black",
+                )
+
+                end_dt = datetime.fromisoformat(history[-1]["time"])
+                end_str = end_dt.strftime("%H:%M")
+                try:
+                    w = draw.textlength(end_str, font=font_small)
+                    draw.text(
+                        (width - margin_right - w, graph_bottom + 15),
+                        end_str,
+                        font=font_small,
+                        fill="black",
+                    )
+                except AttributeError:
+                    draw.text(
+                        (width - margin_right - 50, graph_bottom + 15),
+                        end_str,
+                        font=font_small,
+                        fill="black",
+                    )
+            except Exception:
+                pass
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        img.save(file_path)
+        _LOGGER.info(f"Saved session image to {file_path}")
+
+    def _generate_plan_image(self, data: dict, file_path: str):
+        """Generate a PNG image for the future charging plan."""
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
+            return
+
+        width = 576
+        bg_color = "white"
+
+        # Load Fonts
+        font_header, font_text, font_small = self._load_fonts()
+
+        schedule = data.get("charging_schedule", [])
+        if not schedule:
+            return
+
+        valid_slots = [s for s in schedule if s["price"] is not None]
+        if not valid_slots:
+            return
+
+        height = 650  # Adjusted height
+        img = Image.new("RGB", (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+
+        # Header
+        y = 30
+        draw.text(
+            (width // 2, y),
+            "Charging Plan",
+            font=font_header,
+            fill="black",
+            anchor="mt",
+        )
+        y += 80
+
+        # Extract Summary info
+        summary_text = data.get("charging_summary", "")
+        cost_match = re.search(
+            r"Total Estimated Cost:\*\* ([\d\.]+) (\w+)", summary_text
+        )
+        cost_str = (
+            f"{cost_match.group(1)} {cost_match.group(2)}" if cost_match else "N/A"
+        )
+
+        start_time = valid_slots[0]["start"]
+        end_time = valid_slots[-1]["end"]
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = datetime.fromisoformat(end_time)
+
+        current_soc = data.get("car_soc", 0)
+        target_soc = data.get("planned_target_soc", 0)
+
+        # Logic to hide "range" if target already reached
+        if int(current_soc) >= int(target_soc):
+            soc_line = f"SoC:   {int(current_soc)}% (Target Reached)"
+        else:
+            soc_line = f"SoC:   {int(current_soc)}% -> {int(target_soc)}%"
+
+        # Format: DD/MM HH:MM
+        s_fmt = start_dt.strftime("%d/%m %H:%M")
+        e_fmt = end_dt.strftime("%d/%m %H:%M")
+
+        lines = [
+            f"Plan:  {s_fmt} -> {e_fmt}",
+            soc_line,
+            f"Est Cost: {cost_str}",
+            f"State: {data.get('current_price_status', 'Unknown')}",
+        ]
+
+        for line in lines:
+            draw.text((30, y), line, font=font_text, fill="black")
+            y += 35
+
+        y += 20
+        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
+        y += 30
+
+        # Graph
+        graph_top = y
+        graph_height = 250
+        graph_bottom = graph_top + graph_height
+        margin_left = 60
+        margin_right = 20
+        graph_draw_width = width - margin_left - margin_right
+
+        prices = [s["price"] for s in valid_slots]
+        min_p = min(prices)
+        max_p = max(prices)
+        axis_min_p = math.floor(min_p * 2) / 2
+        axis_max_p = math.ceil(max_p * 2) / 2
+        if axis_max_p == axis_min_p:
+            axis_max_p += 0.5
+        price_range = axis_max_p - axis_min_p
+
+        count = len(valid_slots)
+        bar_w_float = graph_draw_width / max(1, count)
+
+        for i, slot in enumerate(valid_slots):
+            x0 = margin_left + (i * bar_w_float)
+            x1 = margin_left + ((i + 1) * bar_w_float)
+
+            p_norm = (slot["price"] - axis_min_p) / price_range
+            p_h = p_norm * graph_height
+            draw.rectangle(
+                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#e0e0e0", outline=None
+            )
+
+            if slot["active"]:
+                draw.rectangle(
+                    [x0, graph_bottom - 20, x1, graph_bottom],
+                    fill="black",
+                    outline=None,
+                )
+
+        # Left Axis
+        draw.line(
+            [(margin_left, graph_top), (margin_left, graph_bottom)],
+            fill="black",
+            width=2,
+        )
+        curr_mark = axis_min_p
+        while curr_mark <= axis_max_p + 0.01:
+            norm = (curr_mark - axis_min_p) / price_range
+            mark_y = graph_bottom - (norm * graph_height)
+            draw.line(
+                [(margin_left - 5, mark_y), (margin_left, mark_y)],
+                fill="black",
+                width=1,
+            )
+            label = f"{curr_mark:.1f}"
+            draw.text(
+                (margin_left - 55, mark_y - 10), label, font=font_small, fill="black"
+            )
+            curr_mark += 0.5
+
+        # X-Axis Labels
+        draw.text(
+            (margin_left, graph_bottom + 15),
+            start_dt.strftime("%H:%M"),
+            font=font_small,
+            fill="black",
+        )
+
+        end_str = end_dt.strftime("%H:%M")
+        try:
+            w = draw.textlength(end_str, font=font_small)
+            draw.text(
+                (width - margin_right - w, graph_bottom + 15),
+                end_str,
+                font=font_small,
+                fill="black",
+            )
+        except AttributeError:
+            draw.text(
+                (width - margin_right - 50, graph_bottom + 15),
+                end_str,
+                font=font_small,
+                fill="black",
+            )
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        img.save(file_path)
+        _LOGGER.info(f"Saved plan image to {file_path}")

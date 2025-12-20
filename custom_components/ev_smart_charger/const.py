@@ -6,9 +6,14 @@ DOMAIN = "ev_smart_charger"
 CONF_CAR_SOC_SENSOR = "car_soc_sensor"
 CONF_CAR_PLUGGED_SENSOR = "car_plugged_sensor"
 CONF_CAR_CAPACITY = "car_capacity"
-CONF_CAR_CHARGING_LEVEL_ENTITY = "car_charging_level_entity" # Option A: Number entity
-CONF_CAR_LIMIT_SERVICE = "car_limit_service"             # Option B: Service Name
-CONF_CAR_LIMIT_ENTITY_ID = "car_limit_entity_id"         # Option B: Vehicle Entity
+CONF_CAR_CHARGING_LEVEL_ENTITY = "car_charging_level_entity"
+CONF_CAR_LIMIT_SERVICE = "car_limit_service"
+CONF_CAR_LIMIT_ENTITY_ID = "car_limit_entity_id"
+
+# Refresh Configuration
+CONF_CAR_REFRESH_ACTION = "car_refresh_action"  # Service to call
+CONF_CAR_REFRESH_ENTITY = "car_refresh_entity"  # Entity/Device to refresh
+CONF_CAR_REFRESH_INTERVAL = "car_refresh_interval"  # Strategy
 
 CONF_PRICE_SENSOR = "price_sensor"
 CONF_P1_L1 = "p1_l1_sensor"
@@ -31,16 +36,25 @@ CONF_CHARGER_CURRENT_L3 = "charger_current_l3"
 # Defaults
 DEFAULT_NAME = "EV Smart Charger"
 DEFAULT_CAPACITY = 64.0
-DEFAULT_MAX_FUSE = 20.0 
+DEFAULT_MAX_FUSE = 20.0
 DEFAULT_LOSS = 10.0
 DEFAULT_CURRENCY = "SEK"
 
-# --- NEW CONSTANTS FOR ENTITIES ---
-ENTITY_TARGET_SOC = "target_soc" 
-ENTITY_TARGET_OVERRIDE = "target_soc_override" 
+# Refresh Options
+REFRESH_NEVER = "never"
+REFRESH_30_MIN = "30_min"
+REFRESH_1_HOUR = "1_hour"
+REFRESH_2_HOURS = "2_hours"
+REFRESH_3_HOURS = "3_hours"
+REFRESH_4_HOURS = "4_hours"
+REFRESH_AT_TARGET = "at_target"
 
-ENTITY_DEPARTURE_TIME = "departure_time" 
-ENTITY_DEPARTURE_OVERRIDE = "departure_override" 
+# --- NEW CONSTANTS FOR ENTITIES ---
+ENTITY_TARGET_SOC = "target_soc"
+ENTITY_TARGET_OVERRIDE = "target_soc_override"
+
+ENTITY_DEPARTURE_TIME = "departure_time"
+ENTITY_DEPARTURE_OVERRIDE = "departure_override"
 
 ENTITY_SMART_SWITCH = "smart_charging_active"
 ENTITY_BUTTON_CLEAR_OVERRIDE = "clear_manual_override"
