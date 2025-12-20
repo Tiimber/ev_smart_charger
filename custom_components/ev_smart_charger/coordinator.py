@@ -147,14 +147,31 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         )
 
     def _add_log(self, message: str):
-        """Add an entry to the action log and prune old entries."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        """Add an entry to the action log and prune entries older than 24h."""
+        now = datetime.now()
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
         entry = f"[{timestamp}] {message}"
         self.action_log.insert(0, entry)  # Prepend newest
 
-        # Keep only last 50 events
-        if len(self.action_log) > 50:
-            self.action_log.pop()
+        # Prune entries older than 24 hours
+        cutoff = now - timedelta(hours=24)
+
+        # Efficiently prune from the end (oldest entries)
+        while self.action_log:
+            try:
+                last_entry = self.action_log[-1]
+                # Extract timestamp: "[YYYY-MM-DD HH:MM:SS] Message"
+                # Timestamp is between index 1 and 20
+                last_ts_str = last_entry[1:20]
+                last_dt = datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S")
+
+                if last_dt < cutoff:
+                    self.action_log.pop()
+                else:
+                    break  # Oldest entry is fresh enough, stop checking
+            except (ValueError, IndexError):
+                # Remove malformed entries
+                self.action_log.pop()
 
         # Add to current session log if active
         if self.current_session is not None:
@@ -1054,9 +1071,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         cal_time, _ = self._get_calendar_data(data, now)
         if cal_time:
             return cal_time
-        time_input = data.get(ENTITY_DEPARTURE_OVERRIDE)
-        if not time_input:
-            time_input = data.get(ENTITY_DEPARTURE_TIME, time(7, 0))
+        time_input = data.get(ENTITY_DEPARTURE_OVERRIDE) or data.get(
+            ENTITY_DEPARTURE_TIME, time(7, 0)
+        )
         dept_dt = datetime.combine(now.date(), time_input)
         if dept_dt < now:
             dept_dt = dept_dt + timedelta(days=1)
@@ -1081,6 +1098,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         now = datetime.now()
         prices = []
         raw_today = data["price_data"].get("today", [])
+
         if not raw_today:
             if not self.conf_keys.get("price"):
                 plan["charging_summary"] = "Load Balancing Mode (No Price Sensor)."
@@ -1167,7 +1185,20 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         final_target = max(final_target, min_guaranteed)
         plan["planned_target_soc"] = final_target
-        current_soc = data.get("car_soc", 0) or 0.0
+
+        # FIX: Check for 0% SoC to avoid panic charging on initialization
+        current_soc = data.get("car_soc")
+        if current_soc is None or current_soc <= 0.0:
+            plan["should_charge_now"] = False
+            plan["charging_summary"] = (
+                "Waiting for valid Car SoC (Current: 0% or Unknown)."
+            )
+            if not data.get("car_plugged"):
+                plan["should_charge_now"] = False
+            return plan
+
+        # Ensure we work with float for calculations
+        current_soc = float(current_soc)
 
         selected_slots = []
         selected_start_times = set()
@@ -1175,7 +1206,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         if current_soc >= final_target:
             plan["charging_summary"] = (
-                f"Target reached ({int(current_soc)}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
+                f"Target reached ({int(current_soc)}%). Maintenance mode active."
             )
             for slot in calc_window:
                 if slot["price"] <= price_limit_high:
@@ -1189,6 +1220,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     plan["should_charge_now"] = True
                     break
         else:
+            # Calculation
             soc_needed = final_target - current_soc
             kwh_needed = (soc_needed / 100.0) * self.car_capacity
             efficiency = 1.0 - (self.charger_loss / 100.0)
@@ -1201,6 +1233,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if slot_duration_hours <= 0:
                 slot_duration_hours = 1.0
             slots_needed = math.ceil(hours_needed / slot_duration_hours)
+
             sorted_window = sorted(calc_window, key=lambda x: x["price"])
             selected_slots = sorted_window[:slots_needed]
             selected_start_times = {s["start"] for s in selected_slots}
@@ -1241,6 +1274,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 chrono_slots = sorted(selected_slots, key=lambda x: x["start"])
                 kwh_grid_per_slot_max = est_power_kw * slot_duration_hours
                 remaining_kwh_grid = kwh_to_pull
+
                 running_soc = current_soc
                 blocks = []
                 current_block = None
@@ -1292,8 +1326,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 for b in blocks:
                     start_s = b["soc_start"]
                     end_s = min(100, start_s + b["soc_gain"])
+                    # Clamp end_s to final_target if it slightly exceeds due to math
                     if end_s > final_target:
                         end_s = final_target
+
                     avg_p = b["avg_price_acc"] / b["count"]
                     line = (
                         f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
