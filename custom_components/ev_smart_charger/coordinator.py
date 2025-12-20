@@ -279,6 +279,18 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         else:
             _LOGGER.warning("No session data available to generate report.")
 
+    async def async_trigger_plan_image_generation(self):
+        """Manually trigger image generation for the current charging plan."""
+        if not self.data or "charging_schedule" not in self.data:
+            _LOGGER.warning("No charging plan data available to generate image.")
+            return
+
+        save_path = self.hass.config.path("www", "ev_smart_charger_plan.png")
+        await self.hass.async_add_executor_job(
+            self._generate_plan_image, self.data, save_path
+        )
+        self._add_log("Manually triggered plan image generation.")
+
     async def _async_update_data(self):
         """Update data via library."""
         # Ensure persisted settings are loaded on first run
@@ -479,7 +491,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         width = 576
         bg_color = "white"
 
-        # Fonts
+        # Bigger Fonts (approx 50% larger)
         try:
             font_header = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
             font_text = ImageFont.truetype("DejaVuSans.ttf", 27)
@@ -704,42 +716,227 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         img.save(file_path)
         _LOGGER.info(f"Saved session image to {file_path}")
 
+    def _generate_plan_image(self, data: dict, file_path: str):
+        """Generate a PNG image for the future charging plan."""
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
+            return
+
+        width = 576
+        bg_color = "white"
+
+        try:
+            font_header = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
+            font_text = ImageFont.truetype("DejaVuSans.ttf", 27)
+            font_small = ImageFont.truetype("DejaVuSans.ttf", 21)
+        except OSError:
+            font_header = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+
+        schedule = data.get("charging_schedule", [])
+        if not schedule:
+            return
+
+        # Filter for valid slots (exclude closing None price)
+        valid_slots = [s for s in schedule if s["price"] is not None]
+        if not valid_slots:
+            return
+
+        height = 800
+        img = Image.new("RGB", (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+
+        # Header
+        y = 30
+        draw.text(
+            (width // 2, y),
+            "Charging Plan",
+            font=font_header,
+            fill="black",
+            anchor="mt",
+        )
+        y += 70
+
+        # Extract Summary info
+        summary_text = data.get("charging_summary", "")
+        cost_match = re.search(
+            r"Total Estimated Cost:\*\* ([\d\.]+) (\w+)", summary_text
+        )
+        cost_str = (
+            f"{cost_match.group(1)} {cost_match.group(2)}" if cost_match else "N/A"
+        )
+
+        start_time = valid_slots[0]["start"]
+        end_time = valid_slots[-1]["end"]
+
+        current_soc = data.get("car_soc", 0)
+        target_soc = data.get("planned_target_soc", 0)
+
+        # Calculate Estimated kWh
+        est_kwh = 0.0
+        # Re-calc similar to summary logic or just display cost
+        # Since we don't store kwh sum directly in data root easily, we rely on cost.
+
+        lines = [
+            f"Plan:  {start_time[11:16]} -> {end_time[11:16]}",
+            f"SoC:   {int(current_soc)}% -> {int(target_soc)}%",
+            f"Est Cost: {cost_str}",
+            f"State: {data.get('current_price_status', 'Unknown')}",
+        ]
+
+        for line in lines:
+            draw.text((30, y), line, font=font_text, fill="black")
+            y += 45
+
+        y += 15
+        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
+        y += 30
+
+        # Graph
+        graph_top = y
+        graph_height = 300
+        graph_bottom = graph_top + graph_height
+        margin_left = 60
+        margin_right = 20
+        graph_draw_width = width - margin_left - margin_right
+
+        prices = [s["price"] for s in valid_slots]
+        min_p = min(prices)
+        max_p = max(prices)
+        axis_min_p = math.floor(min_p * 2) / 2
+        axis_max_p = math.ceil(max_p * 2) / 2
+        if axis_max_p == axis_min_p:
+            axis_max_p += 0.5
+        price_range = axis_max_p - axis_min_p
+
+        count = len(valid_slots)
+        bar_w_float = graph_draw_width / max(1, count)
+
+        for i, slot in enumerate(valid_slots):
+            x0 = margin_left + (i * bar_w_float)
+            x1 = margin_left + ((i + 1) * bar_w_float)
+
+            p_norm = (slot["price"] - axis_min_p) / price_range
+            p_h = p_norm * graph_height
+            draw.rectangle(
+                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#e0e0e0", outline=None
+            )
+
+            if slot["active"]:
+                draw.rectangle(
+                    [x0, graph_bottom - 20, x1, graph_bottom],
+                    fill="black",
+                    outline=None,
+                )
+
+        # Left Axis
+        draw.line(
+            [(margin_left, graph_top), (margin_left, graph_bottom)],
+            fill="black",
+            width=2,
+        )
+        curr_mark = axis_min_p
+        while curr_mark <= axis_max_p + 0.01:
+            norm = (curr_mark - axis_min_p) / price_range
+            mark_y = graph_bottom - (norm * graph_height)
+            draw.line(
+                [(margin_left - 5, mark_y), (margin_left, mark_y)],
+                fill="black",
+                width=1,
+            )
+            label = f"{curr_mark:.1f}"
+            draw.text(
+                (margin_left - 55, mark_y - 10), label, font=font_small, fill="black"
+            )
+            curr_mark += 0.5
+
+        # X-Axis Labels
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = datetime.fromisoformat(end_time)
+        draw.text(
+            (margin_left, graph_bottom + 10),
+            start_dt.strftime("%H:%M"),
+            font=font_small,
+            fill="black",
+        )
+
+        end_str = end_dt.strftime("%H:%M")
+        try:
+            w = draw.textlength(end_str, font=font_small)
+            draw.text(
+                (width - margin_right - w, graph_bottom + 10),
+                end_str,
+                font=font_small,
+                fill="black",
+            )
+        except AttributeError:
+            draw.text(
+                (width - margin_right - 50, graph_bottom + 10),
+                end_str,
+                font=font_small,
+                fill="black",
+            )
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        img.save(file_path)
+        _LOGGER.info(f"Saved plan image to {file_path}")
+
     def _update_virtual_soc(self, data: dict):
         """Update the internal estimated SoC based on charging activity."""
         current_time = datetime.now()
         sensor_soc = data.get("car_soc")
 
         # 1. Sync Logic
+        # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
+        # OR if we are uninitialized (0.0).
         if sensor_soc is not None:
             if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
 
         # 2. Estimate Logic
+        # Only estimate if we are ACTIVELY charging
         if self._last_applied_state == "charging":
+            # Use Real Charger Current if available (More accurate than Target Amps)
             ch_l1 = data.get("ch_l1", 0.0)
             ch_l2 = data.get("ch_l2", 0.0)
             ch_l3 = data.get("ch_l3", 0.0)
             measured_amps = max(ch_l1, ch_l2, ch_l3)
 
+            # Fallback to Target Amps if no sensor or sensor reads 0 while active
             used_amps = (
                 measured_amps if measured_amps > 0.5 else self._last_applied_amps
             )
 
             if used_amps > 0:
+                # Calculate time delta in hours
                 seconds_passed = (current_time - self._last_update_time).total_seconds()
                 hours_passed = seconds_passed / 3600.0
+
+                # Estimate Power (3-phase 230V standard)
+                # P (kW) = 3 * 230V * Amps / 1000
                 estimated_power_kw = (3 * 230 * used_amps) / 1000.0
+
+                # Efficiency Factor
                 efficiency_pct = self.entry.data.get(CONF_CHARGER_LOSS, 10.0)
                 efficiency_factor = 1.0 - (efficiency_pct / 100.0)
+
+                # Energy to Battery
                 added_kwh = estimated_power_kw * hours_passed * efficiency_factor
 
+                # Convert to % SoC
                 if self.car_capacity > 0:
                     added_percent = (added_kwh / self.car_capacity) * 100.0
                     self._virtual_soc += added_percent
 
+                    # Cap at Physical Car Limit (if we know it)
                     if self._last_applied_car_limit > 0:
                         if self._virtual_soc > self._last_applied_car_limit:
                             self._virtual_soc = float(self._last_applied_car_limit)
+
+                    # Absolute Cap at 100
                     if self._virtual_soc > 100.0:
                         self._virtual_soc = 100.0
 
@@ -748,9 +945,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
     async def _apply_charger_control(self, data: dict, plan: dict):
         """Send commands to the Zaptec entities and Car."""
 
+        # 0. Startup Grace Period Check
         if datetime.now() - self._startup_time < timedelta(minutes=2):
             return
 
+        # 1. Determine Desired State
         should_charge = data.get("should_charge_now", False)
         safe_amps = math.floor(data.get("max_available_current", 0))
 
@@ -761,14 +960,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
             should_charge = False
 
+        # Determine Target Amps based on State
         target_amps = safe_amps if should_charge else 0
         desired_state = "charging" if should_charge else "paused"
 
+        # --- MAINTENANCE MODE / PAUSED OVERRIDE ---
         maintenance_active = "Maintenance mode active" in plan.get(
             "charging_summary", ""
         )
 
         if maintenance_active:
+            # FORCE: Switch ON, Amps 0
             should_charge = True
             target_amps = 0
             desired_state = "maintenance"
@@ -1088,15 +1290,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         now = datetime.now()
         prices = []
         raw_today = data["price_data"].get("today", [])
-
         if not raw_today:
-            if not self.conf_keys.get("price"):
-                plan["charging_summary"] = "Load Balancing Mode (No Price Sensor)."
-            else:
-                plan["charging_summary"] = (
-                    "Error: Price sensor configured but no data received."
-                )
             plan["should_charge_now"] = True
+            plan["charging_summary"] = "No Price Sensor. Load Balancing Mode."
             if not data.get("car_plugged"):
                 plan["should_charge_now"] = False
             return plan
@@ -1135,7 +1331,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         if not prices:
             plan["should_charge_now"] = True
-            plan["charging_summary"] = "No future price data found."
             if not data.get("car_plugged"):
                 plan["should_charge_now"] = False
             return plan
@@ -1144,7 +1339,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         calc_window = [p for p in prices if p["start"] < dept_dt]
         if not calc_window:
             plan["should_charge_now"] = True
-            plan["charging_summary"] = "Departure time passed. Charging immediately."
+            plan["charging_summary"] = "Departure passed. Charging."
             if not data.get("car_plugged"):
                 plan["should_charge_now"] = False
             return plan
@@ -1152,7 +1347,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         cal_time, cal_soc = self._get_calendar_data(data, now)
         time_source = "(Calendar)" if cal_time and cal_time == dept_dt else "(Manual)"
         min_guaranteed = data.get(ENTITY_MIN_SOC, 20)
-        status_note = ""
 
         if self.manual_override_active:
             final_target = data.get(ENTITY_TARGET_OVERRIDE, 80)
@@ -1303,8 +1497,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 for b in blocks:
                     start_s = b["soc_start"]
                     end_s = min(100, start_s + b["soc_gain"])
+                    # Clamp end_s to final_target if it slightly exceeds due to math
                     if end_s > final_target:
                         end_s = final_target
+
                     avg_p = b["avg_price_acc"] / b["count"]
                     line = (
                         f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
