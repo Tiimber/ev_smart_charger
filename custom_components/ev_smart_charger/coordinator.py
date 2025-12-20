@@ -485,11 +485,16 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # Paths to try for TrueType fonts
         font_candidates = [
-            # Path, Size adjustment
-            ("DejaVuSans-Bold.ttf", 0),
-            ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
-            ("/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf", 0),  # Alpine default
-            ("arial.ttf", 0),
+            "DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/ttf-dejavu/DejaVuSans-Bold.ttf",  # Alpine default
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/freefont/FreeSansBold.ttf",
+            "arial.ttf",
         ]
 
         font_header = None
@@ -501,32 +506,75 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         s_text = 30
         s_small = 24
 
-        for path, _ in font_candidates:
-            try:
-                font_header = ImageFont.truetype(path, s_header)
+        found_path = None
 
-                # Guess regular path
-                reg_path = path.replace("-Bold", "")
-                if reg_path == path:
-                    reg_path = path.replace("Bold", "")
-                if reg_path == path:
-                    reg_path = path  # Fallback to same
+        # 1. Try specific candidates
+        for path in font_candidates:
+            if os.path.exists(path):
+                found_path = path
+                break
+            # Also try checking via PIL if name is resolved
+            try:
+                ImageFont.truetype(path, s_header)
+                found_path = path
+                break
+            except OSError:
+                continue
+
+        # 2. Fallback: Search common directories if nothing found
+        if not found_path:
+            search_dirs = [
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                "/root/.local/share/fonts",
+            ]
+            for search_dir in search_dirs:
+                if not os.path.isdir(search_dir):
+                    continue
+                for root, _, files in os.walk(search_dir):
+                    for file in files:
+                        if file.lower().endswith(".ttf"):
+                            # Prefer bold sans
+                            if "bold" in file.lower() and "sans" in file.lower():
+                                found_path = os.path.join(root, file)
+                                break
+                            if "bold" in file.lower() and not found_path:
+                                found_path = os.path.join(root, file)
+                    if found_path:
+                        break
+                if found_path:
+                    break
+
+        # Load if found
+        if found_path:
+            try:
+                _LOGGER.debug(f"Loading font from: {found_path}")
+                font_header = ImageFont.truetype(found_path, s_header)
+
+                # Try to find regular version for text
+                reg_path = found_path
+                # Simple heuristic to find non-bold
+                if "Bold" in found_path:
+                    try_reg = found_path.replace("Bold", "").replace("bold", "")
+                    if os.path.exists(try_reg):
+                        reg_path = try_reg
+                    elif os.path.exists(try_reg.replace("..", ".")):
+                        reg_path = try_reg.replace("..", ".")
 
                 try:
                     font_text = ImageFont.truetype(reg_path, s_text)
                     font_small = ImageFont.truetype(reg_path, s_small)
                 except OSError:
-                    font_text = ImageFont.truetype(path, s_text)
-                    font_small = ImageFont.truetype(path, s_small)
+                    font_text = ImageFont.truetype(found_path, s_text)
+                    font_small = ImageFont.truetype(found_path, s_small)
 
-                _LOGGER.debug(f"Loaded fonts from {path}")
-                break
-            except OSError:
-                continue
+            except OSError as e:
+                _LOGGER.warning(f"Error loading font {found_path}: {e}")
+                font_header = None
 
         if not font_header:
             _LOGGER.warning(
-                "Could not load TrueType fonts. Using Pillow default (tiny)."
+                f"Could not load TrueType fonts. Checked paths and search. Using Pillow default (tiny)."
             )
             font_header = ImageFont.load_default()
             font_text = ImageFont.load_default()
@@ -544,8 +592,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         width = 576
         bg_color = "white"
+
+        # Load fonts via helper
         font_header, font_text, font_small = self._load_fonts()
 
+        # Calculate Text Summary Section Height
         history = report.get("graph_data", [])
         charging_blocks = []
         if history:
@@ -567,13 +618,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if current_block:
                 charging_blocks.append(current_block)
 
-        # Calculate Height based on content + font size
+        # FIX: Increased text section base height substantially for larger fonts
         text_section_height = 600 + (len(charging_blocks) * 60)
         height = text_section_height + 450
 
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
+        # --- DRAW TEXT HEADER ---
         y = 30
         draw.text(
             (width // 2, y),
@@ -600,6 +652,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         draw.line([(10, y), (width - 10, y)], fill="black", width=3)
         y += 30
 
+        # --- DRAW CHARGING LOG ---
         if charging_blocks:
             draw.text((30, y), "Charging Activity:", font=font_text, fill="black")
             y += 50
@@ -640,6 +693,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             for i, point in enumerate(history):
                 x0 = margin_left + (i * bar_w_float)
                 x1 = margin_left + ((i + 1) * bar_w_float)
+
+                # Price Bar (Gray)
                 p_norm = (point["price"] - axis_min_p) / price_range
                 p_h = p_norm * graph_height
                 draw.rectangle(
@@ -913,36 +968,53 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         sensor_soc = data.get("car_soc")
 
         # 1. Sync Logic
+        # Sync ONLY if sensor reports a HIGHER value than our estimate (it updated).
+        # OR if we are uninitialized (0.0).
         if sensor_soc is not None:
             if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
                 self._virtual_soc = float(sensor_soc)
 
         # 2. Estimate Logic
+        # Only estimate if we are ACTIVELY charging
         if self._last_applied_state == "charging":
+            # Use Real Charger Current if available (More accurate than Target Amps)
             ch_l1 = data.get("ch_l1", 0.0)
             ch_l2 = data.get("ch_l2", 0.0)
             ch_l3 = data.get("ch_l3", 0.0)
             measured_amps = max(ch_l1, ch_l2, ch_l3)
 
+            # Fallback to Target Amps if no sensor or sensor reads 0 while active
             used_amps = (
                 measured_amps if measured_amps > 0.5 else self._last_applied_amps
             )
 
             if used_amps > 0:
+                # Calculate time delta in hours
                 seconds_passed = (current_time - self._last_update_time).total_seconds()
                 hours_passed = seconds_passed / 3600.0
+
+                # Estimate Power (3-phase 230V standard)
+                # P (kW) = 3 * 230V * Amps / 1000
                 estimated_power_kw = (3 * 230 * used_amps) / 1000.0
+
+                # Efficiency Factor
                 efficiency_pct = self.entry.data.get(CONF_CHARGER_LOSS, 10.0)
                 efficiency_factor = 1.0 - (efficiency_pct / 100.0)
+
+                # Energy to Battery
                 added_kwh = estimated_power_kw * hours_passed * efficiency_factor
 
+                # Convert to % SoC
                 if self.car_capacity > 0:
                     added_percent = (added_kwh / self.car_capacity) * 100.0
                     self._virtual_soc += added_percent
 
+                    # Cap at Physical Car Limit (if we know it)
                     if self._last_applied_car_limit > 0:
                         if self._virtual_soc > self._last_applied_car_limit:
                             self._virtual_soc = float(self._last_applied_car_limit)
+
+                    # Absolute Cap at 100
                     if self._virtual_soc > 100.0:
                         self._virtual_soc = 100.0
 
@@ -951,9 +1023,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
     async def _apply_charger_control(self, data: dict, plan: dict):
         """Send commands to the Zaptec entities and Car."""
 
+        # 0. Startup Grace Period Check
         if datetime.now() - self._startup_time < timedelta(minutes=2):
             return
 
+        # 1. Determine Desired State
         should_charge = data.get("should_charge_now", False)
         safe_amps = math.floor(data.get("max_available_current", 0))
 
@@ -964,14 +1038,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
             should_charge = False
 
+        # Determine Target Amps based on State
         target_amps = safe_amps if should_charge else 0
         desired_state = "charging" if should_charge else "paused"
 
+        # --- MAINTENANCE MODE / PAUSED OVERRIDE ---
         maintenance_active = "Maintenance mode active" in plan.get(
             "charging_summary", ""
         )
 
         if maintenance_active:
+            # FORCE: Switch ON, Amps 0
             should_charge = True
             target_amps = 0
             desired_state = "maintenance"
@@ -1499,10 +1576,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 for b in blocks:
                     start_s = b["soc_start"]
                     end_s = min(100, start_s + b["soc_gain"])
-                    # Clamp end_s to final_target if it slightly exceeds due to math
                     if end_s > final_target:
                         end_s = final_target
-
                     avg_p = b["avg_price_acc"] / b["count"]
                     line = (
                         f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
