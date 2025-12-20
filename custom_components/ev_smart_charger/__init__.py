@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .coordinator import EVSmartChargerCoordinator
@@ -32,25 +33,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store coordinator reference
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # FIX: Pre-import logbook platform in background to prevent blocking I/O error
+    await hass.async_add_executor_job(importlib.import_module, f"{__package__}.logbook")
+
     # Forward the setup to the platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(update_listener))
-
-    # Register Services
-    async def handle_generate_report(call: ServiceCall):
-        """Handle the report generation service."""
-        await coordinator.async_trigger_report_generation()
-
-    async def handle_generate_plan(call: ServiceCall):
-        """Handle the plan image generation service."""
-        await coordinator.async_trigger_plan_image_generation()
-
-    hass.services.async_register(
-        DOMAIN, "generate_report_image", handle_generate_report
-    )
-    hass.services.async_register(DOMAIN, "generate_plan_image", handle_generate_plan)
 
     return True
 
