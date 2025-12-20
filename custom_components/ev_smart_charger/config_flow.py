@@ -31,8 +31,10 @@ from .const import (
     CONF_CAR_PLUGGED_SENSOR,
     CONF_CAR_CAPACITY,
     CONF_CAR_CHARGING_LEVEL_ENTITY,
+    CONF_CAR_ENTITY_ID,
     CONF_CAR_LIMIT_SERVICE,
-    CONF_CAR_LIMIT_ENTITY_ID,
+    CONF_CAR_REFRESH_ACTION,
+    CONF_CAR_REFRESH_INTERVAL,
     CONF_PRICE_SENSOR,
     CONF_P1_L1,
     CONF_P1_L2,
@@ -48,9 +50,6 @@ from .const import (
     CONF_CHARGER_CURRENT_L1,
     CONF_CHARGER_CURRENT_L2,
     CONF_CHARGER_CURRENT_L3,
-    CONF_CAR_REFRESH_ACTION,
-    CONF_CAR_REFRESH_ENTITY,
-    CONF_CAR_REFRESH_INTERVAL,
     REFRESH_NEVER,
     REFRESH_30_MIN,
     REFRESH_1_HOUR,
@@ -86,6 +85,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
+
         return await self.async_step_charger()
 
     async def async_step_charger(
@@ -202,22 +202,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_CAR_CHARGING_LEVEL_ENTITY,
                     default=defaults.get(CONF_CAR_CHARGING_LEVEL_ENTITY),
                 ): EntitySelector(EntitySelectorConfig(domain="number")),
+                # Shared Vehicle Device/Entity
+                vol.Optional(
+                    CONF_CAR_ENTITY_ID, default=defaults.get(CONF_CAR_ENTITY_ID)
+                ): DeviceSelector(DeviceSelectorConfig()),
                 vol.Optional(
                     CONF_CAR_LIMIT_SERVICE, default=defaults.get(CONF_CAR_LIMIT_SERVICE)
                 ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
                 vol.Optional(
-                    CONF_CAR_LIMIT_ENTITY_ID,
-                    default=defaults.get(CONF_CAR_LIMIT_ENTITY_ID),
-                ): DeviceSelector(DeviceSelectorConfig()),
-                # New Refresh Settings
-                vol.Optional(
                     CONF_CAR_REFRESH_ACTION,
                     default=defaults.get(CONF_CAR_REFRESH_ACTION),
                 ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
-                vol.Optional(
-                    CONF_CAR_REFRESH_ENTITY,
-                    default=defaults.get(CONF_CAR_REFRESH_ENTITY),
-                ): DeviceSelector(DeviceSelectorConfig()),
                 vol.Optional(
                     CONF_CAR_REFRESH_INTERVAL,
                     default=defaults.get(CONF_CAR_REFRESH_INTERVAL, REFRESH_NEVER),

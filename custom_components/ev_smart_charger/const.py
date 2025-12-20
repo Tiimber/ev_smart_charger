@@ -7,13 +7,16 @@ CONF_CAR_SOC_SENSOR = "car_soc_sensor"
 CONF_CAR_PLUGGED_SENSOR = "car_plugged_sensor"
 CONF_CAR_CAPACITY = "car_capacity"
 CONF_CAR_CHARGING_LEVEL_ENTITY = "car_charging_level_entity"
-CONF_CAR_LIMIT_SERVICE = "car_limit_service"
-CONF_CAR_LIMIT_ENTITY_ID = "car_limit_entity_id"
 
-# Refresh Configuration
-CONF_CAR_REFRESH_ACTION = "car_refresh_action"  # Service to call
-CONF_CAR_REFRESH_ENTITY = "car_refresh_entity"  # Entity/Device to refresh
-CONF_CAR_REFRESH_INTERVAL = "car_refresh_interval"  # Strategy
+# Car Integration Settings (Merged)
+CONF_CAR_ENTITY_ID = "car_entity_id"  # Shared Vehicle Entity/Device
+CONF_CAR_LIMIT_SERVICE = (
+    "car_limit_service"  # Service to set limit (e.g. set_charge_limits)
+)
+CONF_CAR_REFRESH_ACTION = (
+    "car_refresh_action"  # Service to force refresh (e.g. force_update)
+)
+CONF_CAR_REFRESH_INTERVAL = "car_refresh_interval"  # Refresh Strategy
 
 CONF_PRICE_SENSOR = "price_sensor"
 CONF_P1_L1 = "p1_l1_sensor"

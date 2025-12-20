@@ -23,27 +23,25 @@
       },
       "car": {
         "title": "2. Car Setup",
-        "description": "Configure Car sensors, limits, and optional Force Refresh settings.",
+        "description": "Configure Car sensors and integration services.\n\n**Advanced Control:** If your car integration supports services to set charge limits or force updates (like Kia/Hyundai), configure them here.",
         "data": {
           "car_soc_sensor": "Car Battery % (SoC)",
           "car_plugged_sensor": "Plugged In Sensor",
           "car_capacity": "Battery Size (kWh)",
-          "car_charging_level_entity": "Limit Number Entity",
-          "car_limit_service": "Limit Service Name",
-          "car_limit_entity_id": "Limit Vehicle Entity",
-          "car_refresh_action": "Force Refresh Service",
-          "car_refresh_entity": "Refresh Entity/Device",
+          "car_charging_level_entity": "Option A: Limit Number Entity",
+          "car_entity_id": "Vehicle Entity / Device",
+          "car_limit_service": "Service: Set Charge Limit",
+          "car_refresh_action": "Service: Force Refresh",
           "car_refresh_interval": "Refresh Frequency"
         },
         "data_description": {
           "car_soc_sensor": "Sensor indicating the current battery percentage of the car.",
           "car_plugged_sensor": "Binary sensor indicating if the charging cable is connected.",
           "car_capacity": "The total usable battery capacity of your EV.",
-          "car_charging_level_entity": "Simple method: Entity to set the charge limit (e.g. number.kona_charge_limit).",
-          "car_limit_service": "Advanced method: The service to call (e.g. 'kia_uvo.set_charge_limits').",
-          "car_limit_entity_id": "The vehicle entity ID to pass to the service call.",
-          "car_refresh_action": "Optional: Service to force car data update (e.g. 'kia_uvo.force_update').",
-          "car_refresh_entity": "The entity to pass to the refresh service.",
+          "car_charging_level_entity": "Simple method: A number entity to directly set the charge limit (e.g. number.kona_charge_limit).",
+          "car_entity_id": "The Vehicle Device (or Entity) to target for the services below.",
+          "car_limit_service": "Optional: Service name to set limits (e.g. 'kia_uvo.set_charge_limits'). Uses the Vehicle Entity above.",
+          "car_refresh_action": "Optional: Service name to force data update (e.g. 'kia_uvo.force_update'). Uses the Vehicle Entity above.",
           "car_refresh_interval": "How often to force a refresh while plugged in."
         }
       },
@@ -105,7 +103,7 @@
       },
       "car": {
         "title": "Car Settings",
-        "description": "Update Car sensors, limits, and refresh settings."
+        "description": "Update Car sensors and limits."
       },
       "meter": {
         "title": "Meter Settings",

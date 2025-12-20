@@ -29,9 +29,8 @@ from .const import (
     CONF_CAR_CAPACITY,
     CONF_CAR_CHARGING_LEVEL_ENTITY,
     CONF_CAR_LIMIT_SERVICE,
-    CONF_CAR_LIMIT_ENTITY_ID,
+    CONF_CAR_ENTITY_ID,
     CONF_CAR_REFRESH_ACTION,
-    CONF_CAR_REFRESH_ENTITY,
     CONF_CAR_REFRESH_INTERVAL,
     CONF_PRICE_SENSOR,
     CONF_P1_L1,
@@ -140,7 +139,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "car_plugged": get_conf(CONF_CAR_PLUGGED_SENSOR),
             "car_limit": get_conf(CONF_CAR_CHARGING_LEVEL_ENTITY),  # Option A
             "car_svc": get_conf(CONF_CAR_LIMIT_SERVICE),  # Option B
-            "car_svc_ent": get_conf(CONF_CAR_LIMIT_ENTITY_ID),  # Option B
+            "car_target_ent": get_conf(
+                CONF_CAR_ENTITY_ID
+            ),  # Shared Entity for B and Refresh
             "price": get_conf(CONF_PRICE_SENSOR),
             "calendar": get_conf(CONF_CALENDAR_ENTITY),
             # Control Entities
@@ -154,7 +155,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "ch_l3": get_conf(CONF_CHARGER_CURRENT_L3),
             # Refresh
             "refresh_svc": get_conf(CONF_CAR_REFRESH_ACTION),
-            "refresh_ent": get_conf(CONF_CAR_REFRESH_ENTITY),
             "refresh_int": get_conf(CONF_CAR_REFRESH_INTERVAL),
         }
 
@@ -177,8 +177,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         while self.action_log:
             try:
                 last_entry = self.action_log[-1]
-                # Extract timestamp: "[YYYY-MM-DD HH:MM:SS] Message"
-                # Timestamp is between index 1 and 20
                 last_ts_str = last_entry[1:20]
                 last_dt = datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S")
                 if last_dt < cutoff:
@@ -186,7 +184,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 else:
                     break
             except (ValueError, IndexError):
-                # Remove malformed entries if any
                 self.action_log.pop()
 
         # Add to current session log if active
@@ -407,7 +404,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             return  # Only refresh when plugged in
 
         svc = self.conf_keys.get("refresh_svc")
-        ent = self.conf_keys.get("refresh_ent")
+        ent = self.conf_keys.get("car_target_ent")  # Use shared entity
         interval_mode = self.conf_keys.get("refresh_int", REFRESH_NEVER)
 
         if not svc or not ent or interval_mode == REFRESH_NEVER:
@@ -608,13 +605,13 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._add_log(f"Set Car Charge Limit to {target_soc}%")
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Car Charge Limit: {e}")
-            elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_svc_ent"):
+            elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_target_ent"):
                 try:
                     full_service = self.conf_keys["car_svc"]
                     if "." in full_service:
                         domain, service_name = full_service.split(".", 1)
                         payload = {"ac_limit": target_soc, "dc_limit": target_soc}
-                        target_id = self.conf_keys["car_svc_ent"]
+                        target_id = self.conf_keys["car_target_ent"]
                         if "." in target_id:
                             payload["entity_id"] = target_id
                         else:
@@ -845,7 +842,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             # Force State Reset so next plug-in starts fresh logic
             self._last_applied_state = "paused"
             self._last_applied_car_limit = -1
-            self._last_scheduled_end = None
 
         self.previous_plugged_state = is_plugged
 
@@ -1066,7 +1062,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         if not calc_window:
             plan["should_charge_now"] = True
-            plan["charging_summary"] = "Departure time passed. Charging immediately."
+            plan["charging_summary"] = "Departure passed. Charging."
             if not data.get("car_plugged"):
                 plan["should_charge_now"] = False
             return plan
@@ -1125,7 +1121,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         if current_soc >= final_target:
             plan["charging_summary"] = (
-                f"Target reached ({int(current_soc)}%). Maintenance mode active (Price <= {price_limit_high} {self.currency})."
+                f"Target reached ({int(current_soc)}%). Maintenance mode active."
             )
             for slot in calc_window:
                 if slot["price"] <= price_limit_high:
@@ -1139,6 +1135,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     plan["should_charge_now"] = True
                     break
         else:
+            # Calculation
             soc_needed = final_target - current_soc
             kwh_needed = (soc_needed / 100.0) * self.car_capacity
             efficiency = 1.0 - (self.charger_loss / 100.0)
@@ -1538,7 +1535,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
     def _generate_report_image(self, report: dict, file_path: str):
         """Generate a PNG image for thermal printers."""
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
         except ImportError:
             _LOGGER.warning("PIL (Pillow) not found. Cannot generate image.")
             return
@@ -1571,7 +1568,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if current_block:
                 charging_blocks.append(current_block)
 
-        # Increased text section base height substantially for larger fonts
+        # FIX: Increased text section base height substantially for larger fonts
         text_section_height = 600 + (len(charging_blocks) * 35)
         height = text_section_height + 400
 
