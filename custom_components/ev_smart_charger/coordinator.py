@@ -507,10 +507,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         font_text = None
         font_small = None
 
-        # Desired Sizes (Reduced by half from the large version)
-        s_header = 22
-        s_text = 16
-        s_small = 12
+        # Desired Sizes (Updated: ~20% increase from original tiny sizes)
+        # Original: 22, 16, 12
+        # Increased: 26, 19, 14
+        s_header = 26
+        s_text = 19
+        s_small = 14
 
         found_path = None
 
@@ -624,18 +626,15 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if current_block:
                 charging_blocks.append(current_block)
 
-        # Height calculation for reduced font
-        # Header = ~100
-        # Lines = 5 * 25 = 125
-        # Blocks = N * 25
-        text_section_height = 350 + (len(charging_blocks) * 30)
-        height = text_section_height + 350
+        # Increased text section base height substantially for larger fonts
+        text_section_height = 600 + (len(charging_blocks) * 35)
+        height = text_section_height + 400
 
         img = Image.new("RGB", (width, height), bg_color)
         draw = ImageDraw.Draw(img)
 
         # --- DRAW TEXT HEADER ---
-        y = 20
+        y = 30
         draw.text(
             (width // 2, y),
             "EV Charging Report",
@@ -643,7 +642,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             fill="black",
             anchor="mt",
         )
-        y += 50
+        y += 60
 
         lines = [
             f"Start: {report['start_time'][:16].replace('T', ' ')}",
@@ -654,30 +653,30 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         ]
 
         for line in lines:
-            draw.text((20, y), line, font=font_text, fill="black")
-            y += 25
+            draw.text((30, y), line, font=font_text, fill="black")
+            y += 35
 
-        y += 10
-        draw.line([(10, y), (width - 10, y)], fill="black", width=2)
-        y += 20
+        y += 15
+        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
+        y += 30
 
         # --- DRAW CHARGING LOG ---
         if charging_blocks:
-            draw.text((20, y), "Charging Activity:", font=font_text, fill="black")
-            y += 30
+            draw.text((30, y), "Charging Activity:", font=font_text, fill="black")
+            y += 40
             for block in charging_blocks:
                 start_dt = datetime.fromisoformat(block["start"])
                 end_dt = datetime.fromisoformat(block["end"])
                 start_str = start_dt.strftime("%H:%M")
                 end_str = end_dt.strftime("%H:%M")
                 line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
-                draw.text((30, y), line, font=font_small, fill="black")
-                y += 25
+                draw.text((40, y), line, font=font_small, fill="black")
+                y += 30
         else:
-            draw.text((20, y), "No charging recorded.", font=font_text, fill="black")
-            y += 25
+            draw.text((30, y), "No charging recorded.", font=font_text, fill="black")
+            y += 40
 
-        y += 20  # Spacing before graph
+        y += 30  # Spacing before graph
 
         # --- DRAW GRAPH ---
         if history:
@@ -685,8 +684,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             graph_height = 250
             graph_bottom = graph_top + graph_height
 
-            margin_left = 50
-            margin_right = 50
+            margin_left = 60
+            margin_right = 60
             graph_draw_width = width - margin_left - margin_right
 
             prices = [p["price"] for p in history]
@@ -714,7 +713,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     outline=None,
                 )
 
-                # Charging Block (Black overlay)
+                # Active Charging Indicator
                 if point["charging"] == 1:
                     draw.rectangle(
                         [x0, graph_bottom - 20, x1, graph_bottom],
@@ -739,7 +738,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
                 label = f"{curr_mark:.1f}"
                 draw.text(
-                    (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
+                    (margin_left - 45, mark_y - 10),
+                    label,
+                    font=font_small,
+                    fill="black",
                 )
                 curr_mark += 0.5
 
@@ -765,7 +767,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 )
                 label = f"{soc_mark}%"
                 draw.text(
-                    (width - margin_right + 8, mark_y - 7),
+                    (width - margin_right + 8, mark_y - 10),
                     label,
                     font=font_small,
                     fill="black",
@@ -780,14 +782,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 points.append((x, y))
 
             if len(points) > 1:
-                draw.line(points, fill="black", width=2)
+                draw.line(points, fill="black", width=3)
 
             # X-Axis Timestamps
             try:
                 start_dt = datetime.fromisoformat(history[0]["time"])
                 start_str = start_dt.strftime("%H:%M")
                 draw.text(
-                    (margin_left, graph_bottom + 5),
+                    (margin_left, graph_bottom + 15),
                     start_str,
                     font=font_small,
                     fill="black",
@@ -798,14 +800,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 try:
                     w = draw.textlength(end_str, font=font_small)
                     draw.text(
-                        (width - margin_right - w, graph_bottom + 5),
+                        (width - margin_right - w, graph_bottom + 15),
                         end_str,
                         font=font_small,
                         fill="black",
                     )
                 except AttributeError:
                     draw.text(
-                        (width - margin_right - 40, graph_bottom + 5),
+                        (width - margin_right - 60, graph_bottom + 15),
                         end_str,
                         font=font_small,
                         fill="black",
@@ -844,7 +846,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         draw = ImageDraw.Draw(img)
 
         # Header
-        y = 20
+        y = 30
         draw.text(
             (width // 2, y),
             "Charging Plan",
@@ -852,7 +854,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             fill="black",
             anchor="mt",
         )
-        y += 50
+        y += 80
 
         # Extract Summary info
         summary_text = data.get("charging_summary", "")
@@ -869,26 +871,32 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         current_soc = data.get("car_soc", 0)
         target_soc = data.get("planned_target_soc", 0)
 
+        # Logic to hide "range" if target already reached
+        if int(current_soc) >= int(target_soc):
+            soc_line = f"SoC:   {int(current_soc)}% (Target Reached)"
+        else:
+            soc_line = f"SoC:   {int(current_soc)}% -> {int(target_soc)}%"
+
         lines = [
             f"Plan:  {start_time[11:16]} -> {end_time[11:16]}",
-            f"SoC:   {int(current_soc)}% -> {int(target_soc)}%",
+            soc_line,
             f"Est Cost: {cost_str}",
             f"State: {data.get('current_price_status', 'Unknown')}",
         ]
 
         for line in lines:
-            draw.text((20, y), line, font=font_text, fill="black")
-            y += 25
+            draw.text((30, y), line, font=font_text, fill="black")
+            y += 35
 
-        y += 10
-        draw.line([(10, y), (width - 10, y)], fill="black", width=2)
         y += 20
+        draw.line([(10, y), (width - 10, y)], fill="black", width=3)
+        y += 30
 
         # Graph
         graph_top = y
         graph_height = 250
         graph_bottom = graph_top + graph_height
-        margin_left = 50
+        margin_left = 60
         margin_right = 20
         graph_draw_width = width - margin_left - margin_right
 
@@ -938,7 +946,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             )
             label = f"{curr_mark:.1f}"
             draw.text(
-                (margin_left - 45, mark_y - 7), label, font=font_small, fill="black"
+                (margin_left - 55, mark_y - 10), label, font=font_small, fill="black"
             )
             curr_mark += 0.5
 
@@ -946,7 +954,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         start_dt = datetime.fromisoformat(start_time)
         end_dt = datetime.fromisoformat(end_time)
         draw.text(
-            (margin_left, graph_bottom + 5),
+            (margin_left, graph_bottom + 15),
             start_dt.strftime("%H:%M"),
             font=font_small,
             fill="black",
@@ -956,14 +964,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         try:
             w = draw.textlength(end_str, font=font_small)
             draw.text(
-                (width - margin_right - w, graph_bottom + 5),
+                (width - margin_right - w, graph_bottom + 15),
                 end_str,
                 font=font_small,
                 fill="black",
             )
         except AttributeError:
             draw.text(
-                (width - margin_right - 40, graph_bottom + 5),
+                (width - margin_right - 50, graph_bottom + 15),
                 end_str,
                 font=font_small,
                 fill="black",
@@ -972,640 +980,3 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         img.save(file_path)
         _LOGGER.info(f"Saved plan image to {file_path}")
-
-    def _update_virtual_soc(self, data: dict):
-        """Update the internal estimated SoC based on charging activity."""
-        current_time = datetime.now()
-        sensor_soc = data.get("car_soc")
-
-        # 1. Sync Logic
-        if sensor_soc is not None:
-            if sensor_soc > self._virtual_soc or self._virtual_soc == 0.0:
-                self._virtual_soc = float(sensor_soc)
-
-        # 2. Estimate Logic
-        if self._last_applied_state == "charging":
-            ch_l1 = data.get("ch_l1", 0.0)
-            ch_l2 = data.get("ch_l2", 0.0)
-            ch_l3 = data.get("ch_l3", 0.0)
-            measured_amps = max(ch_l1, ch_l2, ch_l3)
-
-            used_amps = (
-                measured_amps if measured_amps > 0.5 else self._last_applied_amps
-            )
-
-            if used_amps > 0:
-                seconds_passed = (current_time - self._last_update_time).total_seconds()
-                hours_passed = seconds_passed / 3600.0
-                estimated_power_kw = (3 * 230 * used_amps) / 1000.0
-                efficiency_pct = self.entry.data.get(CONF_CHARGER_LOSS, 10.0)
-                efficiency_factor = 1.0 - (efficiency_pct / 100.0)
-                added_kwh = estimated_power_kw * hours_passed * efficiency_factor
-
-                if self.car_capacity > 0:
-                    added_percent = (added_kwh / self.car_capacity) * 100.0
-                    self._virtual_soc += added_percent
-
-                    if self._last_applied_car_limit > 0:
-                        if self._virtual_soc > self._last_applied_car_limit:
-                            self._virtual_soc = float(self._last_applied_car_limit)
-                    if self._virtual_soc > 100.0:
-                        self._virtual_soc = 100.0
-
-        self._last_update_time = current_time
-
-    async def _apply_charger_control(self, data: dict, plan: dict):
-        """Send commands to the Zaptec entities and Car."""
-
-        if datetime.now() - self._startup_time < timedelta(minutes=2):
-            return
-
-        should_charge = data.get("should_charge_now", False)
-        safe_amps = math.floor(data.get("max_available_current", 0))
-
-        if safe_amps < 6:
-            if should_charge:
-                self._add_log(
-                    f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Pausing."
-                )
-            should_charge = False
-
-        target_amps = safe_amps if should_charge else 0
-        desired_state = "charging" if should_charge else "paused"
-
-        maintenance_active = "Maintenance mode active" in plan.get(
-            "charging_summary", ""
-        )
-
-        if maintenance_active:
-            should_charge = True
-            target_amps = 0
-            desired_state = "maintenance"
-
-        # 2. Control Car Charge Limit
-        target_soc = int(plan.get("planned_target_soc", 80))
-        is_starting = (
-            desired_state == "charging" and self._last_applied_state != "charging"
-        )
-
-        if target_soc != self._last_applied_car_limit or is_starting:
-            if self.conf_keys["car_limit"]:
-                try:
-                    await self.hass.services.async_call(
-                        "number",
-                        "set_value",
-                        {"entity_id": self.conf_keys["car_limit"], "value": target_soc},
-                        blocking=True,
-                    )
-                    self._last_applied_car_limit = target_soc
-                    self._add_log(f"Set Car Charge Limit to {target_soc}%")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to set Car Charge Limit: {e}")
-            elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_svc_ent"):
-                try:
-                    full_service = self.conf_keys["car_svc"]
-                    if "." in full_service:
-                        domain, service_name = full_service.split(".", 1)
-                        payload = {"ac_limit": target_soc, "dc_limit": target_soc}
-                        target_id = self.conf_keys["car_svc_ent"]
-                        if "." in target_id:
-                            payload["entity_id"] = target_id
-                        else:
-                            payload["device_id"] = target_id
-                        await self.hass.services.async_call(
-                            domain, service_name, payload, blocking=True
-                        )
-                        self._last_applied_car_limit = target_soc
-                        self._add_log(f"Service Call: Set Car Limit to {target_soc}%")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to call Car Limit Service: {e}")
-
-        # 3. Control Start/Stop
-        if should_charge:
-            if target_amps > 0:
-                self._was_charging_in_interval = True
-
-            if desired_state != self._last_applied_state:
-                try:
-                    if self.conf_keys.get("zap_switch"):
-                        await self.hass.services.async_call(
-                            "switch",
-                            SERVICE_TURN_ON,
-                            {"entity_id": self.conf_keys["zap_switch"]},
-                            blocking=True,
-                        )
-                        state_msg = (
-                            "CHARGING" if target_amps > 0 else "MAINTENANCE (0A)"
-                        )
-                        self._add_log(f"Switched Charging state to: {state_msg}")
-                    elif self.conf_keys.get("zap_resume"):
-                        await self.hass.services.async_call(
-                            "button",
-                            "press",
-                            {"entity_id": self.conf_keys["zap_resume"]},
-                            blocking=True,
-                        )
-                        self._add_log("Sent Resume command")
-                    self._last_applied_state = desired_state
-                except Exception as e:
-                    _LOGGER.error(f"Failed to switch Zaptec state to CHARGING: {e}")
-
-            if target_amps != self._last_applied_amps and self.conf_keys["zap_limit"]:
-                try:
-                    await self.hass.services.async_call(
-                        "number",
-                        "set_value",
-                        {
-                            "entity_id": self.conf_keys["zap_limit"],
-                            "value": target_amps,
-                        },
-                        blocking=True,
-                    )
-                    self._last_applied_amps = target_amps
-                    if target_amps > 0:
-                        self._add_log(
-                            f"Load Balancing: Set Zaptec limit to {target_amps}A"
-                        )
-                except Exception as e:
-                    _LOGGER.error(f"Failed to set Zaptec limit: {e}")
-
-        else:
-            if self._last_applied_amps != 0 and self.conf_keys["zap_limit"]:
-                try:
-                    await self.hass.services.async_call(
-                        "number",
-                        "set_value",
-                        {"entity_id": self.conf_keys["zap_limit"], "value": 0},
-                        blocking=True,
-                    )
-                    self._last_applied_amps = 0
-                    self._add_log(f"Pausing: Set Zaptec limit to 0A")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to set Zaptec limit to 0: {e}")
-
-            if desired_state != self._last_applied_state:
-                try:
-                    if self.conf_keys.get("zap_switch"):
-                        await self.hass.services.async_call(
-                            "switch",
-                            SERVICE_TURN_OFF,
-                            {"entity_id": self.conf_keys["zap_switch"]},
-                            blocking=True,
-                        )
-                        self._add_log(f"Switched Charging state to: PAUSED")
-                    elif self.conf_keys.get("zap_stop"):
-                        await self.hass.services.async_call(
-                            "button",
-                            "press",
-                            {"entity_id": self.conf_keys["zap_stop"]},
-                            blocking=True,
-                        )
-                        self._add_log("Sent Stop command")
-                    self._last_applied_state = desired_state
-                except Exception as e:
-                    _LOGGER.error(f"Failed to switch Zaptec state to PAUSED: {e}")
-
-    def _fetch_sensor_data(self) -> dict:
-        data = {}
-
-        def get_float(entity_id):
-            if not entity_id:
-                return 0.0
-            state = self.hass.states.get(entity_id)
-            if state is None or state.state in [STATE_UNAVAILABLE, STATE_UNKNOWN]:
-                return 0.0
-            try:
-                return float(state.state)
-            except ValueError:
-                return 0.0
-
-        def get_state(entity_id):
-            return self.hass.states.get(entity_id) if entity_id else None
-
-        data["p1_l1"] = get_float(self.conf_keys["p1_l1"])
-        data["p1_l2"] = get_float(self.conf_keys["p1_l2"])
-        data["p1_l3"] = get_float(self.conf_keys["p1_l3"])
-        data["car_soc"] = get_float(self.conf_keys["car_soc"])
-        data["ch_l1"] = get_float(self.conf_keys.get("ch_l1"))
-        data["ch_l2"] = get_float(self.conf_keys.get("ch_l2"))
-        data["ch_l3"] = get_float(self.conf_keys.get("ch_l3"))
-
-        plugged_state = get_state(self.conf_keys["car_plugged"])
-        data["car_plugged"] = (
-            plugged_state.state
-            in ["on", "true", "connected", "charging", "full", "plugged_in"]
-            if plugged_state
-            else False
-        )
-        price_entity = self.conf_keys.get("price")
-        data["price_data"] = (
-            self.hass.states.get(price_entity).attributes
-            if price_entity and self.hass.states.get(price_entity)
-            else {}
-        )
-        return data
-
-    async def _handle_plugged_event(self, is_plugged: bool, data: dict):
-        if is_plugged and not self.previous_plugged_state:
-            self._add_log("Car plugged in.")
-            self.current_session = {
-                "start_time": datetime.now().isoformat(),
-                "history": [],
-                "log": [],
-            }
-            if data.get("car_soc") is not None:
-                self._virtual_soc = data["car_soc"]
-            else:
-                self._virtual_soc = 0.0
-            soc_entity = self.conf_keys["car_soc"]
-            try:
-                await self.hass.services.async_call(
-                    "homeassistant",
-                    "update_entity",
-                    {"entity_id": soc_entity},
-                    blocking=False,
-                )
-            except Exception:
-                pass
-
-        if not is_plugged and self.previous_plugged_state:
-            self._add_log("Car unplugged. Resetting settings.")
-            if self.current_session:
-                self._finalize_session()
-                self.current_session = None
-            self.manual_override_active = False
-            std_time = data.get(ENTITY_DEPARTURE_TIME, time(7, 0))
-            self.set_user_input(ENTITY_DEPARTURE_OVERRIDE, std_time, internal=True)
-            data[ENTITY_DEPARTURE_OVERRIDE] = std_time
-            std_target = data.get(ENTITY_TARGET_SOC, 80)
-            self.set_user_input(ENTITY_TARGET_OVERRIDE, std_target, internal=True)
-            data[ENTITY_TARGET_OVERRIDE] = std_target
-            self._save_data()
-            if self.conf_keys.get("zap_switch"):
-                try:
-                    await self.hass.services.async_call(
-                        "switch",
-                        SERVICE_TURN_OFF,
-                        {"entity_id": self.conf_keys["zap_switch"]},
-                        blocking=True,
-                    )
-                except Exception:
-                    pass
-            self._last_applied_state = "paused"
-            self._last_applied_car_limit = -1
-            self._last_scheduled_end = None
-
-        self.previous_plugged_state = is_plugged
-
-    def _calculate_load_balancing(self, data: dict) -> float:
-        p1_l1 = data.get("p1_l1", 0.0)
-        p1_l2 = data.get("p1_l2", 0.0)
-        p1_l3 = data.get("p1_l3", 0.0)
-        ch_l1 = data.get("ch_l1", 0.0)
-        ch_l2 = data.get("ch_l2", 0.0)
-        ch_l3 = data.get("ch_l3", 0.0)
-        house_l1 = max(0.0, p1_l1 - ch_l1)
-        house_l2 = max(0.0, p1_l2 - ch_l2)
-        house_l3 = max(0.0, p1_l3 - ch_l3)
-        max_house_current = max(house_l1, house_l2, house_l3)
-        buffer = max(1.0, self.max_fuse * 0.05)
-        return max(0.0, self.max_fuse - max_house_current - buffer)
-
-    def _analyze_prices(self, attributes: dict) -> str:
-        raw_prices = attributes.get("today", [])
-        if not raw_prices:
-            return "No Data"
-        try:
-            count = len(raw_prices)
-            now_dt = datetime.now()
-            idx = (
-                (now_dt.hour * 4) + (now_dt.minute // 15) if count > 25 else now_dt.hour
-            )
-            idx = min(idx, count - 1)
-            current = raw_prices[idx]
-            avg = sum(raw_prices) / count
-            if current < avg * 0.8:
-                return "Very Cheap"
-            if current < avg:
-                return "Cheap"
-            return "Expensive"
-        except Exception:
-            return "Unknown"
-
-    def _get_calendar_data(
-        self, data: dict, now: datetime
-    ) -> tuple[datetime | None, float | None]:
-        events = data.get("calendar_events", [])
-        if not events:
-            return None, None
-        limit = datetime.combine(now.date() + timedelta(days=1), time.max)
-        sorted_events = sorted(events, key=lambda x: x.get("start"))
-        for event in sorted_events:
-            start_str = event.get("start")
-            if isinstance(start_str, dict):
-                start_str = start_str.get("dateTime", start_str.get("date"))
-            if not start_str:
-                continue
-            try:
-                evt_start = datetime.fromisoformat(start_str)
-                if evt_start.tzinfo:
-                    evt_start = evt_start.replace(tzinfo=None)
-                if evt_start < now:
-                    continue
-                if evt_start > limit:
-                    break
-                text = f"{event.get('summary', '')} {event.get('description', '')}"
-                match = re.search(r"(\d+)\s*%", text)
-                target_soc = (
-                    float(match.group(1))
-                    if match and 10 <= int(match.group(1)) <= 100
-                    else None
-                )
-                return evt_start, target_soc
-            except ValueError:
-                continue
-        return None, None
-
-    def _get_departure_time(self, data: dict, now: datetime) -> datetime:
-        cal_time, _ = self._get_calendar_data(data, now)
-        if cal_time:
-            return cal_time
-        time_input = data.get(ENTITY_DEPARTURE_OVERRIDE) or data.get(
-            ENTITY_DEPARTURE_TIME, time(7, 0)
-        )
-        dept_dt = datetime.combine(now.date(), time_input)
-        if dept_dt < now:
-            dept_dt = dept_dt + timedelta(days=1)
-        return dept_dt
-
-    def _generate_charging_plan(self, data: dict) -> dict:
-        """Core Logic."""
-        plan = {
-            "should_charge_now": False,
-            "scheduled_start": None,
-            "planned_target_soc": data.get(ENTITY_TARGET_SOC, 80),
-            "charging_schedule": [],
-            "charging_summary": "Not calculated",
-        }
-        if not data.get(ENTITY_SMART_SWITCH, True):
-            plan["should_charge_now"] = True
-            plan["charging_summary"] = "Smart charging disabled. Charging immediately."
-            if not data.get("car_plugged"):
-                plan["should_charge_now"] = False
-            return plan
-
-        now = datetime.now()
-        prices = []
-        raw_today = data["price_data"].get("today", [])
-        if not raw_today:
-            plan["should_charge_now"] = True
-            plan["charging_summary"] = "No Price Sensor. Load Balancing Mode."
-            if not data.get("car_plugged"):
-                plan["should_charge_now"] = False
-            return plan
-
-        raw_tomorrow = data["price_data"].get("tomorrow", [])
-
-        def parse_price_list(price_list, date_ref):
-            parsed = []
-            if not price_list:
-                return []
-            interval_min = 60 if len(price_list) <= 25 else 15
-            for i, price in enumerate(price_list):
-                start_dt = datetime.combine(date_ref, time(0, 0)) + timedelta(
-                    minutes=i * interval_min
-                )
-                if start_dt + timedelta(minutes=interval_min) < now:
-                    continue
-                parsed.append(
-                    {
-                        "start": start_dt,
-                        "end": start_dt + timedelta(minutes=interval_min),
-                        "price": float(price),
-                    }
-                )
-            return parsed
-
-        if isinstance(raw_today, str):
-            raw_today = [float(x) for x in raw_today.split(",")]
-        if isinstance(raw_tomorrow, str):
-            raw_tomorrow = [float(x) for x in raw_tomorrow.split(",")]
-        prices.extend(parse_price_list(raw_today, now.date()))
-        if data["price_data"].get("tomorrow_valid", False) or raw_tomorrow:
-            prices.extend(
-                parse_price_list(raw_tomorrow, now.date() + timedelta(days=1))
-            )
-
-        if not prices:
-            plan["should_charge_now"] = True
-            plan["charging_summary"] = "No future price data found."
-            if not data.get("car_plugged"):
-                plan["should_charge_now"] = False
-            return plan
-
-        dept_dt = self._get_departure_time(data, now)
-        calc_window = [p for p in prices if p["start"] < dept_dt]
-        if not calc_window:
-            plan["should_charge_now"] = True
-            plan["charging_summary"] = "Departure passed. Charging."
-            if not data.get("car_plugged"):
-                plan["should_charge_now"] = False
-            return plan
-
-        cal_time, cal_soc = self._get_calendar_data(data, now)
-        time_source = "(Calendar)" if cal_time and cal_time == dept_dt else "(Manual)"
-        min_guaranteed = data.get(ENTITY_MIN_SOC, 20)
-
-        if self.manual_override_active:
-            final_target = data.get(ENTITY_TARGET_OVERRIDE, 80)
-            status_note = "(Manual Override)"
-        elif cal_soc is not None:
-            final_target = cal_soc
-            status_note = "(Calendar Event)"
-        else:
-            final_target = data.get(ENTITY_TARGET_SOC, 80)
-            status_note = "(Smart)"
-            min_price_in_window = min(slot["price"] for slot in calc_window)
-            limit_1 = data.get(ENTITY_PRICE_LIMIT_1, 0.5)
-            target_1 = data.get(ENTITY_TARGET_SOC_1, 100)
-            limit_2 = data.get(ENTITY_PRICE_LIMIT_2, 1.5)
-            target_2 = data.get(ENTITY_TARGET_SOC_2, 80)
-            if min_price_in_window <= limit_1:
-                final_target = max(final_target, target_1)
-            elif min_price_in_window <= limit_2:
-                final_target = max(final_target, target_2)
-
-        final_target = max(final_target, min_guaranteed)
-        plan["planned_target_soc"] = final_target
-        current_soc = data.get("car_soc", 0) or 0.0
-
-        selected_slots = []
-        selected_start_times = set()
-        price_limit_high = data.get(ENTITY_PRICE_LIMIT_2, 1.5)
-
-        if current_soc >= final_target:
-            plan["charging_summary"] = (
-                f"Target reached ({int(current_soc)}%). Maintenance mode active."
-            )
-            for slot in calc_window:
-                if slot["price"] <= price_limit_high:
-                    selected_start_times.add(slot["start"])
-                    selected_slots.append(slot)
-            for slot in calc_window:
-                if (
-                    slot["start"] in selected_start_times
-                    and slot["start"] <= now < slot["end"]
-                ):
-                    plan["should_charge_now"] = True
-                    break
-        else:
-            # Calculation
-            soc_needed = final_target - current_soc
-            kwh_needed = (soc_needed / 100.0) * self.car_capacity
-            efficiency = 1.0 - (self.charger_loss / 100.0)
-            kwh_to_pull = kwh_needed / efficiency
-            est_power_kw = min((3 * 230 * self.max_fuse) / 1000, 11.0)
-            hours_needed = kwh_to_pull / est_power_kw
-            slot_duration_hours = (
-                calc_window[0]["end"] - calc_window[0]["start"]
-            ).seconds / 3600.0
-            if slot_duration_hours <= 0:
-                slot_duration_hours = 1.0
-            slots_needed = math.ceil(hours_needed / slot_duration_hours)
-
-            sorted_window = sorted(calc_window, key=lambda x: x["price"])
-            selected_slots = sorted_window[:slots_needed]
-            selected_start_times = {s["start"] for s in selected_slots}
-
-            # --- BUFFER LOGIC (15 Min Overrun) ---
-            if selected_slots:
-                session_end_time = max(s["end"] for s in selected_slots)
-                self._last_scheduled_end = session_end_time
-
-            for slot in calc_window:
-                if (
-                    slot["start"] in selected_start_times
-                    and slot["start"] <= now < slot["end"]
-                ):
-                    plan["should_charge_now"] = True
-                    break
-
-            if not plan["should_charge_now"] and self._last_scheduled_end:
-                if (
-                    self._last_scheduled_end
-                    <= now
-                    < self._last_scheduled_end + timedelta(minutes=15)
-                ):
-                    plan["should_charge_now"] = True
-                    plan["charging_summary"] = (
-                        "Charging Buffer Active (15 min overrun)."
-                    )
-
-            summary_lines = []
-            total_plan_cost = 0.0
-            extra_fee = data.get(ENTITY_PRICE_EXTRA_FEE, 0.0)
-            vat_pct = data.get(ENTITY_PRICE_VAT, 0.0)
-            cost_note = ""
-            if extra_fee > 0 or vat_pct > 0:
-                cost_note = "(incl fees/VAT)"
-
-            if selected_slots:
-                chrono_slots = sorted(selected_slots, key=lambda x: x["start"])
-                kwh_grid_per_slot_max = est_power_kw * slot_duration_hours
-                remaining_kwh_grid = kwh_to_pull
-                running_soc = current_soc
-                blocks = []
-                current_block = None
-
-                for slot in chrono_slots:
-                    if remaining_kwh_grid <= 0.001:
-                        break
-                    raw_price = slot["price"]
-                    adjusted_price = (raw_price + extra_fee) * (1 + vat_pct / 100.0)
-                    kwh_this_slot = min(kwh_grid_per_slot_max, remaining_kwh_grid)
-                    remaining_kwh_grid -= kwh_this_slot
-                    slot_cost = adjusted_price * kwh_this_slot
-                    total_plan_cost += slot_cost
-                    kwh_batt_this_slot = kwh_this_slot * efficiency
-                    soc_gain_this_slot = (
-                        kwh_batt_this_slot / self.car_capacity
-                    ) * 100.0
-
-                    if current_block and slot["start"] == current_block["end"]:
-                        current_block["end"] = slot["end"]
-                        current_block["cost"] += slot_cost
-                        current_block["soc_gain"] += soc_gain_this_slot
-                        current_block["avg_price_acc"] += adjusted_price
-                        current_block["count"] += 1
-                    else:
-                        if current_block:
-                            running_soc += current_block["soc_gain"]
-                            blocks.append(current_block)
-                        current_block = {
-                            "start": slot["start"],
-                            "end": slot["end"],
-                            "cost": slot_cost,
-                            "soc_start": running_soc,
-                            "soc_gain": soc_gain_this_slot,
-                            "avg_price_acc": adjusted_price,
-                            "count": 1,
-                        }
-                if current_block:
-                    blocks.append(current_block)
-
-                summary_lines.append(
-                    f"**Departure:** {dept_dt.strftime('%H:%M')} {time_source}"
-                )
-                summary_lines.append(f"**Target:** {int(final_target)}% {status_note}")
-                summary_lines.append(
-                    f"**Total Estimated Cost:** {total_plan_cost:.2f} {self.currency} {cost_note}"
-                )
-                summary_lines.append("")
-                for b in blocks:
-                    start_s = b["soc_start"]
-                    end_s = min(100, start_s + b["soc_gain"])
-                    if end_s > final_target:
-                        end_s = final_target
-                    avg_p = b["avg_price_acc"] / b["count"]
-                    line = (
-                        f"**{b['start'].strftime('%H:%M')} - {b['end'].strftime('%H:%M')}**\n"
-                        f"SoC: {int(start_s)}% → {int(end_s)}%\n"
-                        f"Cost: {b['cost']:.2f} {self.currency} (Avg: {avg_p:.2f})"
-                    )
-                    summary_lines.append(line)
-                plan["charging_summary"] = "\n\n".join(summary_lines)
-
-        schedule_data = []
-        for slot in prices:
-            active = slot["start"] in selected_start_times
-            schedule_data.append(
-                {
-                    "start": slot["start"].isoformat(),
-                    "end": slot["end"].isoformat(),
-                    "price": slot["price"],
-                    "active": active,
-                }
-            )
-        if schedule_data:
-            last_slot = schedule_data[-1]
-            schedule_data.append(
-                {
-                    "start": last_slot["end"],
-                    "end": last_slot["end"],
-                    "price": last_slot["price"],
-                    "active": False,
-                }
-            )
-        plan["charging_schedule"] = schedule_data
-
-        future_starts = [
-            s["start"]
-            for s in calc_window
-            if s["start"] > now and s["start"] in selected_start_times
-        ]
-        if future_starts:
-            plan["scheduled_start"] = min(future_starts).isoformat()
-
-        if not data.get("car_plugged"):
-            plan["should_charge_now"] = False
-        return plan
