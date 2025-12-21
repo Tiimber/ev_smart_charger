@@ -224,7 +224,16 @@ def generate_charging_plan(
 
     final_target = max(final_target, min_guaranteed)
     plan["planned_target_soc"] = final_target
-    current_soc = data.get("car_soc", 0) or 0.0
+
+    current_soc = data.get("car_soc")
+    if current_soc is None or float(current_soc) <= 0.0:
+        plan["should_charge_now"] = False
+        plan["charging_summary"] = "Waiting for valid Car SoC."
+        if not data.get("car_plugged"):
+            plan["should_charge_now"] = False
+        return plan
+
+    current_soc = float(current_soc)
 
     selected_slots = []
     selected_start_times = set()
@@ -251,8 +260,6 @@ def generate_charging_plan(
         efficiency = 1.0 - (config_settings["charger_loss"] / 100.0)
         kwh_to_pull = kwh_needed / efficiency
 
-        # Estimate power from max fuse (converted to kW)
-        # P = 3 * 230 * Amps / 1000
         est_power_kw = min((3 * 230 * config_settings["max_fuse"]) / 1000.0, 11.0)
         hours_needed = kwh_to_pull / est_power_kw
 
@@ -267,11 +274,9 @@ def generate_charging_plan(
         selected_slots = sorted_window[:slots_needed]
         selected_start_times = {s["start"] for s in selected_slots}
 
-        # Check Buffer Logic in Coordinator side or here?
-        # Logic is simpler here:
-        session_end_time = (
-            max(s["end"] for s in selected_slots) if selected_slots else None
-        )
+        # Check Buffer
+        if selected_slots:
+            plan["session_end_time"] = max(s["end"] for s in selected_slots).isoformat()
 
         for slot in calc_window:
             if (
@@ -280,9 +285,6 @@ def generate_charging_plan(
             ):
                 plan["should_charge_now"] = True
                 break
-
-        # We can't check last_scheduled_end stored state here easily, assume coordinator handles the 15m overrun logic using session_end_time returned
-        plan["session_end_time"] = session_end_time
 
         summary_lines = []
         total_plan_cost = 0.0

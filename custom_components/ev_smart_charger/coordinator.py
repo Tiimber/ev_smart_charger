@@ -56,16 +56,10 @@ from .const import (
     REFRESH_4_HOURS,
     REFRESH_AT_TARGET,
     ENTITY_TARGET_SOC,
-    ENTITY_MIN_SOC,
-    ENTITY_PRICE_LIMIT_1,
-    ENTITY_TARGET_SOC_1,
-    ENTITY_PRICE_LIMIT_2,
-    ENTITY_TARGET_SOC_2,
     ENTITY_DEPARTURE_TIME,
     ENTITY_DEPARTURE_OVERRIDE,
     ENTITY_SMART_SWITCH,
     ENTITY_TARGET_OVERRIDE,
-    ENTITY_BUTTON_CLEAR_OVERRIDE,
     ENTITY_PRICE_EXTRA_FEE,
     ENTITY_PRICE_VAT,
 )
@@ -150,7 +144,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "car_svc": get_conf(CONF_CAR_LIMIT_SERVICE),
             "car_target_ent": get_conf(
                 CONF_CAR_ENTITY_ID
-            ),  # Shared Entity for Refresh & Limit
+            ),  # Shared Entity for Limit AND Refresh
             "price": get_conf(CONF_PRICE_SENSOR),
             "calendar": get_conf(CONF_CALENDAR_ENTITY),
             "zap_limit": get_conf(CONF_ZAPTEC_LIMITER),
@@ -165,13 +159,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         }
 
         super().__init__(
-            hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=30)
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=timedelta(seconds=30),
         )
 
     def _add_log(self, message: str):
-        """Add log entry."""
+        """Add an entry to the action log and prune entries older than 24h."""
         now = datetime.now()
-        entry = f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"[{timestamp}] {message}"
         self.action_log.insert(0, entry)
         cutoff = now - timedelta(hours=24)
         while self.action_log:
@@ -192,7 +190,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         )
 
     async def _load_data(self):
-        """Load settings."""
+        """Load persisted settings from disk."""
         if self._data_loaded:
             return
         try:
@@ -260,8 +258,19 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
     async def async_trigger_plan_image_generation(self):
         if self.data:
+            # Inject fee settings into data passed to image gen
+            data_with_fees = self.data.copy()
+            data_with_fees[ENTITY_PRICE_EXTRA_FEE] = self.user_settings.get(
+                ENTITY_PRICE_EXTRA_FEE, 0.0
+            )
+            data_with_fees[ENTITY_PRICE_VAT] = self.user_settings.get(
+                ENTITY_PRICE_VAT, 0.0
+            )
+
             path = self.hass.config.path("www", "ev_smart_charger_plan.png")
-            await self.hass.async_add_executor_job(generate_plan_image, self.data, path)
+            await self.hass.async_add_executor_job(
+                generate_plan_image, data_with_fees, path
+            )
             self._add_log("Plan Image Generated")
 
     async def _async_update_data(self):
@@ -272,6 +281,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             data = self._fetch_sensor_data()
             data.update(self.user_settings)
 
+            # Calendar
             cal = self.conf_keys.get("calendar")
             data["calendar_events"] = []
             if cal:
@@ -297,6 +307,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             self._update_virtual_soc(data)
             data["car_soc"] = self._virtual_soc
 
+            # Delegate Logic to Planner
             data["max_available_current"] = calculate_load_balancing(
                 data, self.config_settings["max_fuse"]
             )
@@ -306,6 +317,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 data, self.config_settings, self.manual_override_active
             )
 
+            # Handle Buffer Logic (stateful, so stays in coordinator)
             if not plan["should_charge_now"] and plan.get("session_end_time"):
                 self._last_scheduled_end = datetime.fromisoformat(
                     plan["session_end_time"]
@@ -332,11 +344,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"Coordinator Error: {e}")
             raise UpdateFailed(e)
 
+    # --- Helper Methods ---
+
     async def _manage_car_refresh(self, data: dict, plan: dict):
         if not data.get("car_plugged"):
             return
         svc = self.conf_keys.get("refresh_svc")
-        ent = self.conf_keys.get("car_target_ent")  # Use shared entity
+        # FIX: Use the shared car_target_ent
+        ent = self.conf_keys.get("car_target_ent")
         mode = self.conf_keys.get("refresh_int", REFRESH_NEVER)
 
         if not svc or not ent or mode == REFRESH_NEVER:
@@ -369,6 +384,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
     async def _trigger_car_refresh(self, service: str, entity_id: str):
         try:
+            # Capture current state for drift check
             state = self.hass.states.get(self.conf_keys["car_soc"])
             val = (
                 float(state.state)
@@ -377,7 +393,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             )
             self._soc_before_refresh = val
 
-            self._add_log(f"Refreshing Car Data via {service} (Current: {val}%)")
+            self._add_log(f"Forcing Car Refresh (Current: {val}%)")
             domain, name = service.split(".", 1)
             payload = {}
             if "." in entity_id:
@@ -429,6 +445,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._add_log(f"Set Car Limit: {target_soc}%")
                 except Exception:
                     pass
+            # FIX: Use shared car_target_ent
             elif self.conf_keys.get("car_svc") and self.conf_keys.get("car_target_ent"):
                 try:
                     full = self.conf_keys["car_svc"]
@@ -526,6 +543,88 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     except Exception:
                         pass
                 self._last_applied_state = desired_state
+
+    def _record_session_data(self, data):
+        if not self.current_session:
+            return
+        now_ts = datetime.now()
+        current_price = 0.0
+        try:
+            raw_prices = data["price_data"].get("today", [])
+            if raw_prices:
+                count = len(raw_prices)
+                idx = (
+                    (now_ts.hour * 4) + (now_ts.minute // 15)
+                    if count > 25
+                    else now_ts.hour
+                )
+                idx = min(idx, count - 1)
+                current_price = float(raw_prices[idx])
+        except:
+            current_price = 0.0
+
+        extra_fee = data.get(ENTITY_PRICE_EXTRA_FEE, 0.0)
+        vat_pct = data.get(ENTITY_PRICE_VAT, 0.0)
+        adjusted_price = (current_price + extra_fee) * (1 + vat_pct / 100.0)
+
+        is_charging = (
+            1
+            if (
+                self._last_applied_state == "charging" or self._was_charging_in_interval
+            )
+            else 0
+        )
+        point = {
+            "time": now_ts.isoformat(),
+            "soc": data.get("car_soc", 0),
+            "amps": self._last_applied_amps,
+            "charging": is_charging,
+            "price": adjusted_price,
+        }
+
+        self.current_session["history"].append(point)
+        self._was_charging_in_interval = False
+
+    def _finalize_session(self):
+        if not self.current_session:
+            return
+        report = self._calculate_session_totals()
+        self.last_session_data = report
+        self._save_data()
+        self.hass.create_task(self.async_trigger_report_generation())
+
+    def _calculate_session_totals(self):
+        hist = self.current_session["history"]
+        if not hist:
+            return {}
+
+        start_soc = hist[0]["soc"]
+        end_soc = hist[-1]["soc"]
+        total_kwh = 0.0
+        total_cost = 0.0
+        prev = datetime.fromisoformat(hist[0]["time"])
+
+        for i in range(1, len(hist)):
+            curr = datetime.fromisoformat(hist[i]["time"])
+            h = (curr - prev).total_seconds() / 3600.0
+            prev = curr
+            if hist[i - 1]["charging"] and hist[i - 1]["amps"] > 0:
+                p = (3 * 230 * hist[i - 1]["amps"]) / 1000.0
+                k = p * h
+                total_kwh += k
+                total_cost += k * hist[i - 1]["price"]
+
+        return {
+            "start_time": self.current_session["start_time"],
+            "end_time": datetime.now().isoformat(),
+            "start_soc": start_soc,
+            "end_soc": end_soc,
+            "added_kwh": round(total_kwh, 2),
+            "total_cost": round(total_cost, 2),
+            "currency": self.currency,
+            "graph_data": hist,
+            "session_log": self.current_session["log"],
+        }
 
     def _fetch_sensor_data(self):
         data = {}
@@ -658,85 +757,3 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._virtual_soc = 100.0
 
         self._last_update_time = now
-
-    def _record_session_data(self, data):
-        if not self.current_session:
-            return
-        now_ts = datetime.now()
-        current_price = 0.0
-        try:
-            raw_prices = data["price_data"].get("today", [])
-            if raw_prices:
-                count = len(raw_prices)
-                idx = (
-                    (now_ts.hour * 4) + (now_ts.minute // 15)
-                    if count > 25
-                    else now_ts.hour
-                )
-                idx = min(idx, count - 1)
-                current_price = float(raw_prices[idx])
-        except:
-            current_price = 0.0
-
-        extra_fee = data.get(ENTITY_PRICE_EXTRA_FEE, 0.0)
-        vat_pct = data.get(ENTITY_PRICE_VAT, 0.0)
-        adjusted_price = (current_price + extra_fee) * (1 + vat_pct / 100.0)
-
-        is_charging = (
-            1
-            if (
-                self._last_applied_state == "charging" or self._was_charging_in_interval
-            )
-            else 0
-        )
-        point = {
-            "time": now_ts.isoformat(),
-            "soc": data.get("car_soc", 0),
-            "amps": self._last_applied_amps,
-            "charging": is_charging,
-            "price": adjusted_price,
-        }
-
-        self.current_session["history"].append(point)
-        self._was_charging_in_interval = False
-
-    def _finalize_session(self):
-        if not self.current_session:
-            return
-        report = self._calculate_session_totals()
-        self.last_session_data = report
-        self._save_data()
-        self.hass.create_task(self.async_trigger_report_generation())
-
-    def _calculate_session_totals(self):
-        hist = self.current_session["history"]
-        if not hist:
-            return {}
-
-        start_soc = hist[0]["soc"]
-        end_soc = hist[-1]["soc"]
-        total_kwh = 0.0
-        total_cost = 0.0
-        prev = datetime.fromisoformat(hist[0]["time"])
-
-        for i in range(1, len(hist)):
-            curr = datetime.fromisoformat(hist[i]["time"])
-            h = (curr - prev).total_seconds() / 3600.0
-            prev = curr
-            if hist[i - 1]["charging"] and hist[i - 1]["amps"] > 0:
-                p = (3 * 230 * hist[i - 1]["amps"]) / 1000.0
-                k = p * h
-                total_kwh += k
-                total_cost += k * hist[i - 1]["price"]
-
-        return {
-            "start_time": self.current_session["start_time"],
-            "end_time": datetime.now().isoformat(),
-            "start_soc": start_soc,
-            "end_soc": end_soc,
-            "added_kwh": round(total_kwh, 2),
-            "total_cost": round(total_cost, 2),
-            "currency": self.currency,
-            "graph_data": hist,
-            "session_log": self.current_session["log"],
-        }
