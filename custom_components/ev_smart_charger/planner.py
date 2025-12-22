@@ -281,7 +281,9 @@ def generate_charging_plan(
                 plan["should_charge_now"] = True
                 break
 
-        plan["session_end_time"] = session_end_time
+        plan["session_end_time"] = (
+            session_end_time.isoformat() if session_end_time else None
+        )
 
         summary_lines = []
         total_plan_cost = 0.0
