@@ -6,7 +6,7 @@ This is written to fit my need, which is a very specific combination, but I've t
 
 I also have a Local Calendar integration, where I in advance have set my specific, varying, but on a recurring schedule with ten minute events of each morning, which I use for automatically starting climate just before when I leave home. I have made this calendar compatible for knowing the target time of the charging window as well. If people are interested, I could bake in my Climate control code into this integration as well, or perhaps make that available as another custom integration.
 
-**Note!** *Much of the code was written by AI, and just tested and heavily inspected and questioned by me in several iterations. I am a programmer in my work, but Python and Home Assistant specifics aren't my specialities.*
+**Note!** *Much of the code (and tests) was written by AI (Gemini and Copilot), and manually tested and heavily inspected and questioned by me in several iterations. I am a programmer in my work, but Python and Home Assistant specifics aren't my specialities.*
 
 **Sample dashboard card**
 
@@ -23,6 +23,7 @@ I also have a Local Calendar integration, where I in advance have set my specifi
   * In my case, I have varying schedule that repeats every two weeks, one pattern the first week and another the next week.
 * **Manual Overrides:** Easily override the next charging session's target percentage or departure time without affecting your standard daily schedule.
 * **Maintenance Mode:** Keeps the charger active (if price allows) after reaching the target to support battery balancing or climate control.
+* **Overload Prevention with Automatic Compensation:** If your house fuse is fully loaded and the charger cannot be allocated 6A minimum, charging pauses to protect your home. The system automatically tracks these prevented minutes and extends your charging plan with extra time during the cheapest available hours to ensure you still reach your target.
 
 ## Prerequisites
 
@@ -44,7 +45,7 @@ Before installing, ensure you have the following:
 
 ### Method 2: Manual
 
-1.  Copy the `ev_smart_charger` folder into your Home Assistant `config/custom_components/` directory.
+1.  Copy the `custom_components/ev_smart_charger` folder into your Home Assistant `config/custom_components/` directory.
 2.  Restart Home Assistant.
 
 ## Configuration
@@ -67,6 +68,19 @@ During setup, you will map your existing Home Assistant entities:
 * **Settings:** Main Fuse Size (A), Charger Efficiency Loss (%), and Currency.
 * **Calendar (Optional):** A Local Calendar entity to read for trip planning, or advanced recurring travel.
 
+## Advanced Configuration Parameters
+
+The following parameters are optional but provide finer control:
+
+* **Car Refresh Logic (Optional):** Force periodic updates of car state from the vehicle API.
+    * **Refresh Action:** Service to call (e.g., `kia_uvo.force_update`)
+    * **Refresh Interval:** How often to refresh (Never, 30 min, 1 hour, 2 hours, etc.)
+* **Zaptec Resume/Stop (Alternative):** If you don't have a Switch entity, use separate Resume and Stop buttons instead.
+* **Car Service Call (Alternative):** If your car supports a charging-limit service instead of an entity.
+* **Smart Price Tiers:** Set different charging targets based on electricity prices. (Settable through exposed entities)
+    * **Price Limit 1 & Target SoC 1:** Very cheap price threshold (e.g., charge to 90% if ≤ 0.10).
+    * **Price Limit 2 & Target SoC 2:** Expensive price threshold (e.g., charge only to 70% if ≥ 3.00).
+
 ## How to Use
 
 ### 1. Smart Mode (Default)
@@ -80,12 +94,54 @@ Simply plug in your car. The integration will:
 If you need to leave earlier or charge more for a specific trip:
 * Adjust the **"Next Session"** slider or time.
 * The system immediately switches to **Override Mode**, strictly following your new settings.
-* **Reset:** When you unplug the car, these overrides automatically reset to your standard defaults.
+* **Auto-Reset:** When you unplug the car, these overrides automatically reset to your standard defaults, returning the system to Smart Mode for the next charging session.
+* **Manual Reset:** You can also reset overrides anytime by pressing the **"Clear Manual Override"** button, which is available to be added to the dashboard (see samples linked at the bottom of this document).
 
 ### 3. Calendar Automation
 Create an event in your configured calendar. The integration looks for events within the next 24 hours.
 * **Departure Time:** Taken from the event Start Time.
 * **Target SoC:** To set a custom target, include a percentage in the event title or description (e.g., **"Trip to Cabin 90%"**).
+
+#### Calendar Event Format
+
+The system scans your calendar for events within the next 24 hours. To set a custom charging target, include a percentage in the event title or description:
+
+**Examples:**
+* `Trip to Cabin 100%` — Charges to 100% by the event start time
+* `Work Conference 80%` — Targets 80%
+* `Airport 60%` — Targets 60%
+
+The percentage should be between 10% and 100%. If multiple percentages are found, the first one is used. The event's start time becomes the charging deadline.
+
+### 4. Maintenance Mode
+After your car reaches the target SoC, the system can keep the charger active at 0A (no current) to support:
+* **Battery Balancing:** Some vehicles use low-current charging to balance cell voltages for battery longevity.
+* **Climate Control:** Charging keeps the vehicle awake and powered, allowing preconditioning or climate systems to run.
+* **Smart Pricing:** Even in maintenance mode, charging only remains active if the current electricity price is below your configured threshold.
+
+You can disable maintenance mode entirely by setting your target SoC lower, or let it run passively while you're at home.
+
+## Load Balancing Details
+
+The system protects your home's electrical system by calculating the maximum safe current available for charging at any moment:
+
+* **Safety Margin:** A 5% buffer is always maintained below your main fuse limit to account for voltage fluctuations.
+* **6A Minimum:** The charger requires at least 6A to safely operate. If less is available, charging pauses automatically (overload prevention).
+* **Phase Awareness:** If you provide charger current sensors (L1/L2/L3), the system calculates `Available = Main Fuse - (Total Grid Load - Charger Load)`. Without these sensors, it falls back to using the Zaptec limiter value to estimate current usage.
+* **Real-time Adjustment:** Every 30 seconds, the system recalculates available current based on your household's actual consumption and adjusts the charger limit accordingly.
+
+If charging is prevented due to insufficient current, the system automatically compensates by extending your charging schedule into cheaper price slots, ensuring you still reach your target on time.
+
+## Virtual SoC Estimator
+
+Between actual car state readings, the system estimates your car's State of Charge based on charging activity:
+
+* **Charging Current & Time:** If the charger is active, the system calculates estimated energy delivered using the applied current (Amps) and duration.
+* **Efficiency Factored In:** The charger loss percentage you configured is accounted for in the calculation.
+* **Accuracy:** These estimates help the system make smarter decisions about when to start/stop charging without waiting for the next car API update (which can take minutes).
+* **Reset on Update:** When a real SoC reading is received from the car, the virtual estimate is replaced with the actual value to correct any drift.
+
+This allows the system to react faster to changing conditions and provides more accurate cost projections for your charging session.
 
 ## Entities Explained
 
@@ -107,6 +163,37 @@ This integration creates several entities to help you control and visualize the 
 * **Max Safe Current** (`sensor`): The dynamic amperage limit calculated to protect your main fuse.
 * **Charger Logic Status** (`sensor`): Shows current state (Disconnected, Waiting, Charging).
 * **Price Logic** (`sensor`): Indicates if current electricity price is considered Cheap/Expensive relative to the day's average.
+
+### Charging Report and Charging Plan
+
+These were made "for fun", but also serve some purpost. They were made to be printed on a thermal printer.
+
+**Charging Plan** provides a real-time visual forecast of when charging will occur and at what cost:
+* Updates when manually triggered.
+* Shows electricity price trends, selected charging windows, and estimated SoC progression.
+* Includes total estimated cost for the session with spot price, grid fees, and VAT factored in.
+* Helps you understand why charging is (or isn't) happening at any given moment.
+
+**Charging Report** captures the details of each completed charging session:
+* Generated automatically when the car is unplugged.
+* Displays session duration, actual SoC gain, cost breakdown, and a historical graph of prices and charging activity.
+* Includes the total time prevented by overload protection (if any occurred), so you can see how the system compensated for grid constraints.
+
+Both are available as camera entities for easy integration into your Home Assistant dashboard see below for examples.
+
+## Price Sensor Data Format
+
+If using a price sensor (e.g., Nordpool), the integration expects it to have the following attributes:
+
+* **`today`:** A list of electricity prices for today, either:
+    * 96 entries (quarter-hourly: every 15 minutes) — e.g., 96 prices for a full 24-hour day
+    * 24 entries (hourly: every hour) — e.g., 24 prices for a full 24-hour day
+    * Edge cases: 92–100 entries for 15-min, or 23–25 entries for hourly are also accepted
+* **`tomorrow`:** A list of prices for tomorrow (same format as `today`). Optional, but recommended for better planning.
+* **`tomorrow_valid`:** A boolean attribute indicating whether tomorrow's prices are available and reliable.
+* **Price units:** Prices should be in your local currency per kWh (e.g., SEK/kWh, EUR/kWh).
+
+The integration automatically detects the interval granularity (15-min vs. hourly) based on list length and adapts slot durations accordingly. If your price sensor has a different attribute name, you may need to create a template sensor as an intermediary.
 
 ## Dashboard Configuration
 

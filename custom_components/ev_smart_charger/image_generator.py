@@ -377,7 +377,7 @@ def generate_plan_image(data: dict, file_path: str):
     graph_height = 250
     graph_bottom = graph_top + graph_height
     margin_left = 60
-    margin_right = 20
+    margin_right = 60
     graph_draw_width = width - margin_left - margin_right
 
     prices = [s["price"] for s in valid_slots]
