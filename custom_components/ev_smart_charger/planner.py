@@ -125,15 +125,24 @@ def get_departure_time(
 
 
 def generate_charging_plan(
-    data: dict, config_settings: dict, manual_override: bool, now: datetime | None = None
+    data: dict, config_settings: dict, manual_override: bool, now: datetime | None = None, overload_prevention_minutes: float = 0.0
 ) -> dict:
-    """Core Logic."""
+    """Core Logic.
+    
+    Args:
+        data: Sensor data and settings
+        config_settings: Configuration parameters
+        manual_override: Whether manual override is active
+        now: Current datetime (for testing)
+        overload_prevention_minutes: Minutes of accumulated charging time lost due to overload prevention
+    """
     plan = {
         "should_charge_now": False,
         "scheduled_start": None,
         "planned_target_soc": data.get(ENTITY_TARGET_SOC, 80),
         "charging_schedule": [],
         "charging_summary": "Not calculated",
+        "overload_prevention_minutes": overload_prevention_minutes,
     }
 
     if not data.get(ENTITY_SMART_SWITCH, True):
@@ -238,6 +247,14 @@ def generate_charging_plan(
     selected_start_times = set()
     price_limit_high = data.get(ENTITY_PRICE_LIMIT_2, 1.5)
 
+    # Calculate extra slots needed to compensate for overload prevention minutes
+    extra_slots_needed = 0
+    if overload_prevention_minutes > 0:
+        slot_duration_min = (
+            15 if len(raw_today) > 25 else 60
+        )  # 15 min slots or 60 min slots
+        extra_slots_needed = math.ceil(overload_prevention_minutes / slot_duration_min)
+
     if current_soc >= final_target:
         plan["charging_summary"] = (
             f"Target reached ({int(current_soc)}%). Maintenance mode active."
@@ -270,6 +287,9 @@ def generate_charging_plan(
         if slot_duration_hours <= 0:
             slot_duration_hours = 1.0
         slots_needed = math.ceil(hours_needed / slot_duration_hours)
+        
+        # Add extra slots to compensate for overload prevention minutes
+        slots_needed += extra_slots_needed
 
         sorted_window = sorted(calc_window, key=lambda x: x["price"])
         selected_slots = sorted_window[:slots_needed]

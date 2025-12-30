@@ -152,6 +152,11 @@ def generate_report_image(report: dict, file_path: str):
         f"Cost:  {report['total_cost']} {report['currency']}",
         f"SoC:   {int(report['start_soc'])}% -> {int(report['end_soc'])}%",
     ]
+    
+    # Add overload prevention minutes if available
+    overload_mins = report.get("overload_prevention_minutes", 0.0)
+    if overload_mins > 0:
+        lines.append(f"Prevented: {int(overload_mins)} min (overload)")
 
     for line in lines:
         draw.text((30, y), line, font=font_text, fill="black")

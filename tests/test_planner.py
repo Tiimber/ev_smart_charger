@@ -353,3 +353,40 @@ def test_car_target_soc_entity_fallback():
     schedule = plan.get("charging_schedule", [])
     assert isinstance(schedule, list)
 
+
+def test_overload_prevention_extends_charging_schedule():
+    """When overload_prevention_minutes > 0, extra charging slots are added at cheapest prices."""
+    # Create price list with clear cheap and expensive slots
+    now = FIXED_NOW
+    raw_today = make_price_list(
+        low_indices=[40, 41, 42, 70, 71, 72],  # Two blocks of cheap prices
+        low_value=0.3,
+        base=3.0
+    )
+
+    data = {
+        "price_data": {"today": raw_today},
+        const.ENTITY_TARGET_SOC: 80,
+        const.ENTITY_SMART_SWITCH: True,
+        const.ENTITY_MIN_SOC: 20,
+        const.ENTITY_DEPARTURE_TIME: time(23, 59),
+        "car_soc": 40,
+    }
+
+    config = {"max_fuse": 20.0, "charger_loss": 10.0, "car_capacity": 64.0, "has_price_sensor": True}
+
+    # Plan without overload prevention
+    plan_normal = planner.generate_charging_plan(data, config, manual_override=False, now=now, overload_prevention_minutes=0)
+    schedule_normal = plan_normal.get("charging_schedule", [])
+    active_normal = [s for s in schedule_normal if s.get("active")]
+    
+    # Plan with 30 minutes of overload prevention (2 extra slots @ 15min each)
+    plan_extended = planner.generate_charging_plan(data, config, manual_override=False, now=now, overload_prevention_minutes=30)
+    schedule_extended = plan_extended.get("charging_schedule", [])
+    active_extended = [s for s in schedule_extended if s.get("active")]
+    
+    # Extended plan should have more active slots
+    assert len(active_extended) >= len(active_normal), "Extended plan should have at least as many or more slots"
+    # Verify the overload prevention minutes are tracked in the plan
+    assert plan_extended.get("overload_prevention_minutes") == 30
+

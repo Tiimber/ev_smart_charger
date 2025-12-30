@@ -111,6 +111,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # New Flag: Tracks if user explicitly moved the Next Session slider
         self.manual_override_active = False
 
+        # Overload Prevention Tracking
+        # Accumulates minutes where charging was prevented due to overload
+        # and automatically adds compensatory charging time at the cheapest slots
+        self.overload_prevention_minutes = 0.0
+
         # Persistence
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
         self._data_loaded = False
@@ -204,6 +209,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 self.manual_override_active = data.get("manual_override_active", False)
                 self.action_log = data.get("action_log", [])
                 self.last_session_data = data.get("last_session_data")
+                self.overload_prevention_minutes = data.get("overload_prevention_minutes", 0.0)
 
                 settings = data.get("user_settings", {})
 
@@ -243,6 +249,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 "user_settings": clean_settings,
                 "action_log": self.action_log,
                 "last_session_data": self.last_session_data,
+                "overload_prevention_minutes": self.overload_prevention_minutes,
             }
 
         self.store.async_delay_save(data_to_save, 1.0)
@@ -360,7 +367,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             data["current_price_status"] = analyze_prices(data["price_data"])
 
             plan = generate_charging_plan(
-                data, self.config_settings, self.manual_override_active
+                data, self.config_settings, self.manual_override_active, overload_prevention_minutes=self.overload_prevention_minutes
             )
 
             # Handle Buffer Logic (stateful, so stays in coordinator)
@@ -514,6 +521,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 self._add_log(
                     f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Pausing."
                 )
+                # Track minutes lost to overload prevention (30 second update interval)
+                self.overload_prevention_minutes += 0.5
             should_charge = False
 
         target_amps = safe_amps if should_charge else 0
@@ -825,4 +834,5 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "currency": self.currency,
             "graph_data": history,
             "session_log": self.current_session["log"],
+            "overload_prevention_minutes": self.overload_prevention_minutes,
         }
