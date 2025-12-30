@@ -343,6 +343,7 @@ def generate_plan_image(data: dict, file_path: str):
 
     if int(current_soc) >= int(target_soc):
         soc_line = f"SoC:   {int(current_soc)}% (Target Reached)"
+        cost_str = "0.00 (No charging needed)"
     else:
         soc_line = f"SoC:   {int(current_soc)}% -> {int(target_soc)}%"
 
@@ -443,7 +444,10 @@ def generate_plan_image(data: dict, file_path: str):
     
     soc_points = []
     for i, slot in enumerate(valid_slots):
-        if active_count > 0:
+        # If target already reached, keep SoC flat at current level
+        if int(current_soc) >= int(target_soc):
+            estimated_soc = current_soc
+        elif active_count > 0:
             # Linear interpolation from current to target based on active slots
             progress = sum(1 for s in valid_slots[:i+1] if s.get("active")) / active_count
             estimated_soc = current_soc + (target_soc - current_soc) * progress
