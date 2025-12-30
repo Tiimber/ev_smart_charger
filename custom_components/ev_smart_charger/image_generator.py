@@ -40,10 +40,10 @@ def _load_fonts():
     font_text = None
     font_small = None
 
-    # Desired Sizes (increased by 7pt for better readability on thermal printer)
-    s_header = 33
-    s_text = 26
-    s_small = 21
+    # Desired Sizes (increased by 4pt for better readability on thermal printer)
+    s_header = 30
+    s_text = 23
+    s_small = 18
 
     found_path = None
 
@@ -208,7 +208,7 @@ def generate_report_image(report: dict, file_path: str):
             p_norm = (point["price"] - axis_min_p) / price_range
             p_h = p_norm * graph_height
             draw.rectangle(
-                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#505050", outline=None
+                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#808080", outline=None
             )
 
             if point["charging"] == 1:
@@ -392,7 +392,7 @@ def generate_plan_image(data: dict, file_path: str):
         p_norm = (slot["price"] - axis_min_p) / price_range
         p_h = p_norm * graph_height
         draw.rectangle(
-            [x0, graph_bottom - p_h, x1, graph_bottom], fill="#505050", outline=None
+            [x0, graph_bottom - p_h, x1, graph_bottom], fill="#808080", outline=None
         )
         if slot["active"]:
             draw.rectangle(
