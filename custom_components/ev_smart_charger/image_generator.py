@@ -40,10 +40,10 @@ def _load_fonts():
     font_text = None
     font_small = None
 
-    # Desired Sizes
-    s_header = 26
-    s_text = 19
-    s_small = 14
+    # Desired Sizes (increased by 7pt for better readability on thermal printer)
+    s_header = 33
+    s_text = 26
+    s_small = 21
 
     found_path = None
 
@@ -208,7 +208,7 @@ def generate_report_image(report: dict, file_path: str):
             p_norm = (point["price"] - axis_min_p) / price_range
             p_h = p_norm * graph_height
             draw.rectangle(
-                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#e0e0e0", outline=None
+                [x0, graph_bottom - p_h, x1, graph_bottom], fill="#505050", outline=None
             )
 
             if point["charging"] == 1:
@@ -348,12 +348,16 @@ def generate_plan_image(data: dict, file_path: str):
 
     s_fmt = start_dt.strftime("%d/%m %H:%M")
     e_fmt = end_dt.strftime("%d/%m %H:%M")
+    
+    # Calculate average price per kWh from schedule slots
+    prices = [s["price"] for s in valid_slots if s["price"] is not None]
+    avg_price = sum(prices) / len(prices) if prices else 0.0
 
     lines = [
         f"Plan:  {s_fmt} -> {e_fmt}",
         soc_line,
         f"Est Cost: {cost_str}",
-        f"State: {data.get('current_price_status', 'Unknown')}",
+        f"Avg Price: {avg_price:.2f} per kWh",
     ]
 
     for line in lines:
@@ -388,7 +392,7 @@ def generate_plan_image(data: dict, file_path: str):
         p_norm = (slot["price"] - axis_min_p) / price_range
         p_h = p_norm * graph_height
         draw.rectangle(
-            [x0, graph_bottom - p_h, x1, graph_bottom], fill="#e0e0e0", outline=None
+            [x0, graph_bottom - p_h, x1, graph_bottom], fill="#505050", outline=None
         )
         if slot["active"]:
             draw.rectangle(
@@ -408,6 +412,52 @@ def generate_plan_image(data: dict, file_path: str):
         label = f"{curr_mark:.1f}"
         draw.text((margin_left - 55, mark_y - 10), label, font=font_small, fill="black")
         curr_mark += 0.5
+
+    # Draw SoC (State of Charge) line on right axis
+    draw.line(
+        [(width - margin_right, graph_top), (width - margin_right, graph_bottom)],
+        fill="black",
+        width=2,
+    )
+    for soc_mark in [0, 20, 40, 60, 80, 100]:
+        norm = soc_mark / 100.0
+        mark_y = graph_bottom - (norm * graph_height)
+        draw.line(
+            [(width - margin_right, mark_y), (width - margin_right + 5, mark_y)],
+            fill="black",
+            width=1,
+        )
+        label = f"{soc_mark}%"
+        draw.text(
+            (width - margin_right + 8, mark_y - 7),
+            label,
+            font=font_small,
+            fill="black",
+        )
+
+    # Estimate SoC progression for the charging plan
+    # Assume linear increase during active charging from current to target SoC
+    current_soc = data.get("car_soc", 0)
+    target_soc = data.get("planned_target_soc", 80)
+    active_count = sum(1 for s in valid_slots if s.get("active"))
+    
+    soc_points = []
+    for i, slot in enumerate(valid_slots):
+        if active_count > 0:
+            # Linear interpolation from current to target based on active slots
+            progress = sum(1 for s in valid_slots[:i+1] if s.get("active")) / active_count
+            estimated_soc = current_soc + (target_soc - current_soc) * progress
+        else:
+            # No charging, SoC stays constant
+            estimated_soc = current_soc
+        
+        x = margin_left + (i * bar_w_float) + (bar_w_float / 2)
+        soc_norm = min(estimated_soc, 100.0) / 100.0
+        y = graph_bottom - (soc_norm * graph_height)
+        soc_points.append((x, y))
+    
+    if len(soc_points) > 1:
+        draw.line(soc_points, fill="black", width=2)
 
     draw.text(
         (margin_left, graph_bottom + 15),

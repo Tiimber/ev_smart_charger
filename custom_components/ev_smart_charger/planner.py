@@ -29,6 +29,14 @@ def calculate_load_balancing(data: dict, max_fuse: float) -> float:
     ch_l2 = data.get("ch_l2", 0.0)
     ch_l3 = data.get("ch_l3", 0.0)
 
+    # If charger current sensors are not configured, use Zaptec limiter value as fallback
+    # This ensures the load balancing accounts for the commanded current limit
+    if ch_l1 == 0.0 and ch_l2 == 0.0 and ch_l3 == 0.0:
+        zap_limit = data.get("zap_limit_value", 0.0)
+        if zap_limit > 0:
+            # Assume limiter current is distributed (roughly evenly) across phases
+            ch_l1 = ch_l2 = ch_l3 = zap_limit / 3.0
+
     house_l1 = max(0.0, p1_l1 - ch_l1)
     house_l2 = max(0.0, p1_l2 - ch_l2)
     house_l3 = max(0.0, p1_l3 - ch_l3)

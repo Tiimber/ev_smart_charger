@@ -666,6 +666,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         data["ch_l1"] = get_float(self.conf_keys.get("ch_l1"))
         data["ch_l2"] = get_float(self.conf_keys.get("ch_l2"))
         data["ch_l3"] = get_float(self.conf_keys.get("ch_l3"))
+        # Read Zaptec limiter value for load balancing fallback
+        data["zap_limit_value"] = get_float(self.conf_keys.get("zap_limit"))
 
         plugged_state = get_state(self.conf_keys["car_plugged"])
         data["car_plugged"] = (
