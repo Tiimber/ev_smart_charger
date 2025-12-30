@@ -1,0 +1,5 @@
+type: markdown
+title: Charger Action Log
+content: >-
+  {% for entry in state_attr('sensor.charger_logic_status', 'action_log') or
+  [] %} - {{ entry }} {% endfor %}

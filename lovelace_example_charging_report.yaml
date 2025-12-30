@@ -1,0 +1,8 @@
+type: picture-glance
+title: Last Session
+camera_image: camera.last_session_report
+aspect_ratio: 0.75
+entities:
+  - entity: button.regenerate_session_image
+    name: Update
+    icon: mdi:refresh

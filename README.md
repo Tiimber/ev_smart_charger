@@ -10,7 +10,7 @@ I also have a Local Calendar integration, where I in advance have set my specifi
 
 **Sample dashboard card**
 
-[![Full Dashboard Card](./dashboard_card_small.png)](./dashboard_card_full.png)
+[![Sample Dashboard Card](./dashboard_card_typical_small.png)](./dashboard_card_typical_full.png)
 
 *More Dashboard code samples, with YAML code, can be found through the link in the bottom of this file.*
 

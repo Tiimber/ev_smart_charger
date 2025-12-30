@@ -1,0 +1,10 @@
+type: picture-glance
+title: Future Plan
+camera_image: camera.charging_plan_report
+aspect_ratio: 0.75
+entities:
+  - entity: button.regenerate_plan_image
+    name: Update
+    icon: mdi:refresh
+  - entity: sensor.charging_schedule
+    icon: mdi:calendar-clock
