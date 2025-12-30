@@ -5,3 +5,29 @@ __pycache__/
 .vscode/
 .idea/
 *.log
+
+# Virtualenvs
+.venv/
+env/
+ENV/
+
+# Python
+*.py[cod]
+*$py.class
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+
+# Packaging / build
+dist/
+build/
+*.egg-info/
+pip-wheel-metadata/
+
+# Local env / secrets
+.env
+.env.*

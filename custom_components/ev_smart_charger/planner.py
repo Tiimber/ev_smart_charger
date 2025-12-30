@@ -125,7 +125,7 @@ def get_departure_time(
 
 
 def generate_charging_plan(
-    data: dict, config_settings: dict, manual_override: bool
+    data: dict, config_settings: dict, manual_override: bool, now: datetime | None = None
 ) -> dict:
     """Core Logic."""
     plan = {
@@ -143,7 +143,7 @@ def generate_charging_plan(
             plan["should_charge_now"] = False
         return plan
 
-    now = datetime.now()
+    now = now or datetime.now()
     prices = []
     raw_today = data["price_data"].get("today", [])
 
