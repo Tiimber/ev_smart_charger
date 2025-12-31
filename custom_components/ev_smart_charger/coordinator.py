@@ -62,9 +62,15 @@ from .const import (
     ENTITY_PRICE_VAT,
 )
 
+# Imports for Real-time Safety safety
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.core import callback
+from time import perf_counter
+
 # Imports from helper modules
 from .image_generator import generate_report_image, generate_plan_image
 from .planner import generate_charging_plan, calculate_load_balancing, analyze_prices
+from .session_manager import SessionManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,13 +89,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # Internal state
         self.previous_plugged_state = False
         self.user_settings = {}  # Storage for UI inputs
-        self.action_log = []  # Rolling log of actions
+        
+        # Session & Logging Management
+        self.session_manager = SessionManager(hass)
 
-        # Session Tracking
-        self.current_session = None  # Active recording
-        self.last_session_data = None  # Finished report
-        # Flag to capture short charging bursts between ticks
-        self._was_charging_in_interval = False
+        # Scheduling state
 
         # Scheduling state
         self._last_scheduled_end = None  # Track end of planned charging for buffer
@@ -111,10 +115,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # New Flag: Tracks if user explicitly moved the Next Session slider
         self.manual_override_active = False
 
-        # Overload Prevention Tracking
-        # Accumulates minutes where charging was prevented due to overload
-        # and automatically adds compensatory charging time at the cheapest slots
-        self.overload_prevention_minutes = 0.0
+        # New Flag: Tracks if user explicitly moved the Next Session slider
+        self.manual_override_active = False
+
+        # Real-time Safety Listeners
+        self._listeners = []
+        self._debounce_unsub = None
+        self._last_p1_update = datetime.min
+
 
         # Persistence
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
@@ -168,35 +176,67 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=30),
         )
 
-    def _add_log(self, message: str):
-        """Add an entry to the action log and prune entries older than 24h."""
+    def async_setup_listeners(self):
+        """Set up event listeners for real-time safety."""
+        # Listen to P1 sensor changes used for load balancing
+        p1_sensors = [
+            self.conf_keys["p1_l1"],
+            self.conf_keys["p1_l2"],
+            self.conf_keys["p1_l3"],
+        ]
+        # Filter out None values
+        p1_sensors = [s for s in p1_sensors if s]
+
+        if p1_sensors:
+            _LOGGER.debug(f"Setting up real-time safety listeners for: {p1_sensors}")
+            self._listeners.append(
+                async_track_state_change_event(
+                    self.hass, p1_sensors, self._async_p1_update_callback
+                )
+            )
+
+    def async_shutdown(self):
+        """Cancel listeners and timers to clean up."""
+        for unsub in self._listeners:
+            unsub()
+        self._listeners = []
+
+        if self._debounce_unsub:
+            self._debounce_unsub()
+            self._debounce_unsub = None
+
+    @callback
+    def _async_p1_update_callback(self, event):
+        """Handle P1 meter state changes with debouncing."""
         now = datetime.now()
-        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"[{timestamp}] {message}"
-        self.action_log.insert(0, entry)  # Prepend newest
+        
+        # Debounce: Ensure we don't update more than once every 2 seconds
+        # unless an update is already scheduled.
+        time_since = (now - self._last_p1_update).total_seconds()
+        
+        if time_since < 2.0:
+            # If we recently updated, schedule a delayed update if not already scheduled
+            if not self._debounce_unsub:
+                delay = 2.0 - time_since
+                self._debounce_unsub = self.hass.loop.call_later(
+                    delay, self._async_scheduled_refresh
+                )
+            return
 
-        # Keep only last 24h events
-        cutoff = now - timedelta(hours=24)
-        while self.action_log:
-            try:
-                last_entry = self.action_log[-1]
-                last_ts_str = last_entry[1:20]
-                last_dt = datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S")
-                if last_dt < cutoff:
-                    self.action_log.pop()
-                else:
-                    break
-            except (ValueError, IndexError):
-                self.action_log.pop()
+        # If enough time passed, update immediately
+        self._async_scheduled_refresh()
 
-        # Add to current session log if active
-        if self.current_session is not None:
-            self.current_session["log"].append(entry)
+    @callback
+    def _async_scheduled_refresh(self):
+        """Trigger the actual refresh."""
+        self._debounce_unsub = None
+        self._last_p1_update = datetime.now()
+        # Request refresh (this is async and safe)
+        self.async_request_refresh()
 
-        # Fire event for Logbook
-        self.hass.bus.async_fire(
-            f"{DOMAIN}_log_event", {"message": message, "name": "EV Smart Charger"}
-        )
+    def _add_log(self, message: str):
+        """Add an entry to the action log."""
+        self.session_manager.add_log(message)
 
     async def _load_data(self):
         """Load persisted settings from disk with robust error handling."""
@@ -207,9 +247,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             data = await self.store.async_load()
             if data:
                 self.manual_override_active = data.get("manual_override_active", False)
-                self.action_log = data.get("action_log", [])
-                self.last_session_data = data.get("last_session_data")
-                self.overload_prevention_minutes = data.get("overload_prevention_minutes", 0.0)
+                self.session_manager.load_from_dict(data)
 
                 settings = data.get("user_settings", {})
 
@@ -244,13 +282,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 if isinstance(val, time):
                     clean_settings[key] = val.strftime("%H:%M")
 
-            return {
+            data = {
                 "manual_override_active": self.manual_override_active,
                 "user_settings": clean_settings,
-                "action_log": self.action_log,
-                "last_session_data": self.last_session_data,
-                "overload_prevention_minutes": self.overload_prevention_minutes,
             }
+            data.update(self.session_manager.to_dict())
+            return data
 
         self.store.async_delay_save(data_to_save, 1.0)
 
@@ -328,6 +365,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         """Update data via library."""
+        start_time = perf_counter()
+        
         if not self._data_loaded:
             await self._load_data()
 
@@ -367,7 +406,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             data["current_price_status"] = analyze_prices(data["price_data"])
 
             plan = generate_charging_plan(
-                data, self.config_settings, self.manual_override_active, overload_prevention_minutes=self.overload_prevention_minutes
+                data, self.config_settings, self.manual_override_active, overload_prevention_minutes=self.session_manager.overload_prevention_minutes
             )
 
             # Handle Buffer Logic (stateful, so stays in coordinator)
@@ -390,7 +429,13 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             await self._manage_car_refresh(data, plan)
             await self._apply_charger_control(data, plan)
             self._record_session_data(data)
-            data["action_log"] = self.action_log
+            data["action_log"] = self.session_manager.action_log
+            data["last_session_data"] = self.session_manager.last_session_data
+
+            # Performance Logging
+            duration = perf_counter() - start_time
+            data["latency_ms"] = round(duration * 1000, 2)
+            _LOGGER.debug(f"Data Update & Logic completed in {duration:.4f}s")
 
             return data
 
@@ -568,9 +613,10 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.error(f"Car Limit Service Failed: {e}")
 
         if should_charge:
-            if target_amps > 0:
-                self._was_charging_in_interval = True
-
+            # Mark that we charged in this interval
+            self.session_manager.mark_charging_in_interval()
+            if self._last_applied_state != "charging" or self._last_applied_car_limit != target_amps:
+                self._add_log(f"Setting charger to {target_amps}A")
             if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):
@@ -694,32 +740,29 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         return data
 
     async def _handle_plugged_event(self, is_plugged, data):
+        """Handle logic when car is plugged/unplugged."""
         if is_plugged and not self.previous_plugged_state:
-            self._add_log("Car plugged in.")
-            self.current_session = {
-                "start_time": datetime.now().isoformat(),
-                "history": [],
-                "log": [],
-            }
-            if data.get("car_soc") is not None:
-                self._virtual_soc = data["car_soc"]
-            else:
-                self._virtual_soc = 0.0
-            soc_entity = self.conf_keys["car_soc"]
+            self.session_manager.start_session(data.get("car_soc", 0))
+            self.manual_override_active = False
+            # If we missed a session finalization, it's too late now, start fresh.
             try:
-                await self.hass.services.async_call(
-                    "homeassistant",
-                    "update_entity",
-                    {"entity_id": soc_entity},
-                    blocking=False,
-                )
+                # Reset inputs to defaults
+                std_time = self.user_settings.get(ENTITY_DEPARTURE_TIME, time(7, 0))
+                self.set_user_input(ENTITY_DEPARTURE_OVERRIDE, std_time, internal=True)
+                self.user_settings[ENTITY_DEPARTURE_OVERRIDE] = std_time
+                
+                std_target = self.user_settings.get(ENTITY_TARGET_SOC, 80)
+                self.set_user_input(ENTITY_TARGET_OVERRIDE, std_target, internal=True)
+                self.user_settings[ENTITY_TARGET_OVERRIDE] = std_target
+
+                # Potentially zaptec specific resume
+                if self.conf_keys.get("zap_switch") and self.conf_keys.get("zap_resume"):
+                    pass # Keep existing logic logic if present
             except Exception:
                 pass
 
         if not is_plugged and self.previous_plugged_state:
-            self._add_log("Unplugged.")
-            self._finalize_session()
-            self.current_session = None
+            self._finalize_session(final_soc=data.get("car_soc"))
             self.manual_override_active = False
 
             std_time = self.user_settings.get(ENTITY_DEPARTURE_TIME, time(7, 0))
@@ -749,90 +792,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         self.previous_plugged_state = is_plugged
 
     def _record_session_data(self, data):
-        if not self.current_session:
-            return
-        now_ts = datetime.now()
-        current_price = 0.0
-        try:
-            raw_prices = data["price_data"].get("today", [])
-            if raw_prices:
-                count = len(raw_prices)
-                idx = (
-                    (now_ts.hour * 4) + (now_ts.minute // 15)
-                    if count > 25
-                    else now_ts.hour
-                )
-                idx = min(idx, count - 1)
-                current_price = float(raw_prices[idx])
-        except:
-            current_price = 0.0
-
-        extra_fee = self.user_settings.get(ENTITY_PRICE_EXTRA_FEE, 0.0)
-        vat_pct = self.user_settings.get(ENTITY_PRICE_VAT, 0.0)
-        adjusted_price = (current_price + extra_fee) * (1 + vat_pct / 100.0)
-
-        is_charging = (
-            1
-            if (
-                self._last_applied_state == "charging" or self._was_charging_in_interval
-            )
-            else 0
+        self.session_manager.record_data_point(
+            data, self.user_settings, self._last_applied_amps, self._last_applied_state
         )
-        point = {
-            "time": now_ts.isoformat(),
-            "soc": data.get("car_soc", 0),
-            "amps": self._last_applied_amps,
-            "charging": is_charging,
-            "price": adjusted_price,
-        }
 
-        self.current_session["history"].append(point)
-        self._was_charging_in_interval = False
-
-    def _finalize_session(self):
-        if not self.current_session:
-            return
-        report = self._calculate_session_totals()
-        self.last_session_data = report
-        self._save_data()
-        try:
-            save_path = self.hass.config.path(
-                "www", "ev_smart_charger_last_session.png"
-            )
-            self.hass.async_add_executor_job(generate_report_image, report, save_path)
-        except Exception as e:
-            _LOGGER.warning(f"Could not trigger image generation: {e}")
-
-    def _calculate_session_totals(self):
-        history = self.current_session["history"]
-        if not history:
-            return {}
-        start_soc = history[0]["soc"]
-        end_soc = history[-1]["soc"]
-        total_kwh = 0.0
-        total_cost = 0.0
-        prev = datetime.fromisoformat(history[0]["time"])
-        for i in range(1, len(history)):
-            curr = datetime.fromisoformat(history[i]["time"])
-            delta_h = (curr - prev).total_seconds() / 3600.0
-            prev = curr
-            amps = history[i - 1]["amps"]
-            is_charging = history[i - 1]["charging"]
-            if is_charging and amps > 0:
-                power = (3 * 230 * amps) / 1000.0
-                kwh = power * delta_h
-                cost = kwh * history[i - 1]["price"]
-                total_kwh += kwh
-                total_cost += cost
-        return {
-            "start_time": self.current_session["start_time"],
-            "end_time": datetime.now().isoformat(),
-            "start_soc": start_soc,
-            "end_soc": end_soc,
-            "added_kwh": round(total_kwh, 2),
-            "total_cost": round(total_cost, 2),
-            "currency": self.currency,
-            "graph_data": history,
-            "session_log": self.current_session["log"],
-            "overload_prevention_minutes": self.overload_prevention_minutes,
-        }
+    def _finalize_session(self, final_soc=None):
+        report = self.session_manager.stop_session(self.user_settings, self.currency, final_soc=final_soc)
+        if report:
+            try:
+                save_path = self.hass.config.path(
+                    "www", "ev_smart_charger_last_session.png"
+                )
+                self.hass.async_add_executor_job(generate_report_image, report, save_path)
+            except Exception as e:
+                _LOGGER.warning(f"Could not trigger image generation: {e}")

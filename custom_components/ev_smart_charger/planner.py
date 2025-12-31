@@ -422,4 +422,7 @@ def generate_charging_plan(
     if not data.get("car_plugged"):
         plan["should_charge_now"] = False
 
+    if plan["should_charge_now"] and "amps" not in plan:
+        plan["amps"] = config_settings.get("max_fuse", 16.0)
+
     return plan

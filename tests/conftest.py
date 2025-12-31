@@ -24,6 +24,7 @@ def _make_ha_stubs():
             self.logger = logger
             self.name = name
             self.update_interval = update_interval
+            self.data = {}
 
     def UpdateFailed(msg):
         return Exception(msg)
@@ -45,6 +46,12 @@ def _make_ha_stubs():
             return None
 
     storage.Store = Store
+    
+    # homeassistant.helpers.event
+    event = ModuleType("homeassistant.helpers.event")
+    event.async_track_state_change_event = lambda hass, entities, action: None
+    
+    # homeassistant.config_entries and core placeholders
 
     # homeassistant.config_entries and core placeholders
     ce = ModuleType("homeassistant.config_entries")
@@ -53,12 +60,15 @@ def _make_ha_stubs():
 
     core = ModuleType("homeassistant.core")
     class HomeAssistant: pass
+    def callback(func): return func
     core.HomeAssistant = HomeAssistant
+    core.callback = callback
 
     # Insert into sys.modules
     sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.helpers.update_coordinator"] = uh
     sys.modules["homeassistant.helpers.storage"] = storage
+    sys.modules["homeassistant.helpers.event"] = event
     sys.modules["homeassistant.config_entries"] = ce
     sys.modules["homeassistant.core"] = core
 

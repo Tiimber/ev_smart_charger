@@ -128,7 +128,7 @@ The system protects your home's electrical system by calculating the maximum saf
 * **Safety Margin:** A 5% buffer is always maintained below your main fuse limit to account for voltage fluctuations.
 * **6A Minimum:** The charger requires at least 6A to safely operate. If less is available, charging pauses automatically (overload prevention).
 * **Phase Awareness:** If you provide charger current sensors (L1/L2/L3), the system calculates `Available = Main Fuse - (Total Grid Load - Charger Load)`. Without these sensors, it falls back to using the Zaptec limiter value to estimate current usage.
-* **Real-time Adjustment:** Every 30 seconds, the system recalculates available current based on your household's actual consumption and adjusts the charger limit accordingly.
+* **Real-time Adjustment:** The system listens for immediate updates from your electricity meter (P1) and recalculates available current instantly (with a 2-second debounce), providing protection against overload spikes.
 
 If charging is prevented due to insufficient current, the system automatically compensates by extending your charging schedule into cheaper price slots, ensuring you still reach your target on time.
 

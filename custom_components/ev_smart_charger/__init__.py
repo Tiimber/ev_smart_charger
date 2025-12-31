@@ -42,6 +42,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(update_listener))
+    
+    # Setup real-time listeners
+    coordinator.async_setup_listeners()
+    entry.async_on_unload(coordinator.async_shutdown)
 
     return True
 
