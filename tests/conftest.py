@@ -104,8 +104,16 @@ def pkg_loader():
             ev_mod = ModuleType(pkg_ev)
             ev_mod.__path__ = [str(base)]
             sys.modules[pkg_ev] = ev_mod
+            # Fix: Attach to parent
+            setattr(sys.modules["custom_components"], "ev_smart_charger", ev_mod)
 
-        return _load_pkg_module(f"custom_components.ev_smart_charger.{name}", base / f"{name}.py")
+        # Load the requested module
+        mod = _load_pkg_module(f"custom_components.ev_smart_charger.{name}", base / f"{name}.py")
+        
+        # Fix: Attach this module to the package
+        setattr(sys.modules[pkg_ev], name, mod)
+        
+        return mod
 
     return _loader
 
