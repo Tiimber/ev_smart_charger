@@ -88,6 +88,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
         # Internal state
         self.previous_plugged_state = False
+        self._last_unknown_plugged_state: str | None = None
         self.user_settings = {}  # Storage for UI inputs
         
         # Session & Logging Management
@@ -697,13 +698,19 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):
-                        await self.hass.services.async_call(
-                            "switch",
-                            SERVICE_TURN_OFF,
-                            {"entity_id": self.conf_keys["zap_switch"]},
-                            blocking=True,
-                        )
-                        self._add_log(f"Switched Charging state to: PAUSED")
+                        # If the car is plugged in, keep the charger enabled so the pilot
+                        # signal stays present. Some vehicle integrations report the
+                        # car as "unplugged" if the EVSE is fully disabled.
+                        if data.get("car_plugged", False):
+                            self._add_log("Paused (plugged): Keeping charger enabled")
+                        else:
+                            await self.hass.services.async_call(
+                                "switch",
+                                SERVICE_TURN_OFF,
+                                {"entity_id": self.conf_keys["zap_switch"]},
+                                blocking=True,
+                            )
+                            self._add_log("Switched Charging state to: PAUSED")
                     elif self.conf_keys.get("zap_stop"):
                         await self.hass.services.async_call(
                             "button",
@@ -744,12 +751,53 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         data["zap_limit_value"] = get_float(self.conf_keys.get("zap_limit"))
 
         plugged_state = get_state(self.conf_keys["car_plugged"])
-        data["car_plugged"] = (
-            plugged_state.state
-            in ["on", "true", "connected", "charging", "full", "plugged_in"]
-            if plugged_state
-            else False
-        )
+        if plugged_state:
+            raw_state = str(plugged_state.state)
+            normalized = raw_state.strip().lower()
+
+            truthy_states = {
+                "on",
+                "true",
+                "connected",
+                "charging",
+                "full",
+                "plugged_in",
+                "plugged",
+                "yes",
+                "y",
+                "1",
+            }
+            falsy_states = {
+                "off",
+                "false",
+                "disconnected",
+                "unplugged",
+                "no",
+                "n",
+                "0",
+                STATE_UNKNOWN,
+                STATE_UNAVAILABLE,
+            }
+
+            if normalized in truthy_states:
+                data["car_plugged"] = True
+            elif normalized in falsy_states:
+                data["car_plugged"] = False
+            else:
+                # Fallback: numeric parsing (e.g. 0/1, 0.0/1.0)
+                try:
+                    data["car_plugged"] = float(normalized) > 0
+                except ValueError:
+                    data["car_plugged"] = False
+                    if self._last_unknown_plugged_state != normalized:
+                        self._last_unknown_plugged_state = normalized
+                        _LOGGER.warning(
+                            "Unexpected plugged sensor state for %s: '%s' (treating as unplugged)",
+                            self.conf_keys.get("car_plugged"),
+                            raw_state,
+                        )
+        else:
+            data["car_plugged"] = False
         price_entity = self.conf_keys.get("price")
         data["price_data"] = (
             self.hass.states.get(price_entity).attributes
