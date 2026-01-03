@@ -559,6 +559,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         if datetime.now() - self._startup_time < timedelta(minutes=2):
             return
 
+        if not data.get("car_plugged", False):
+            return
+
         should_charge = data.get("should_charge_now", False)
         safe_amps = math.floor(data.get("max_available_current", 0))
         if safe_amps < 6:
@@ -614,7 +617,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         if should_charge:
             # Mark that we charged in this interval
             self.session_manager.mark_charging_in_interval()
-            if self._last_applied_state != "charging" or self._last_applied_car_limit != target_amps:
+            if self._last_applied_state != "charging" or self._last_applied_amps != target_amps:
                 self._add_log(f"Setting charger to {target_amps}A")
             if desired_state != self._last_applied_state:
                 try:
@@ -661,7 +664,12 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.error(f"Failed to set Zaptec limit: {e}")
 
         else:
-            if self._last_applied_amps != 0 and self.conf_keys["zap_limit"]:
+            is_stopping = self._last_applied_state in ("charging", "maintenance")
+
+            # Only touch the Zaptec limiter when we are actively stopping charging.
+            # Outside planned charging windows we keep the limiter unchanged to avoid
+            # unnecessary toggling/spam.
+            if is_stopping and self.conf_keys["zap_limit"]:
                 try:
                     await self.hass.services.async_call(
                         "number",
