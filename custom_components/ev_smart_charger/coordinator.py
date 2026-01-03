@@ -567,7 +567,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     f"Safety Cutoff: Available {safe_amps}A is below minimum 6A. Pausing."
                 )
                 # Track minutes lost to overload prevention (30 second update interval)
-                self.overload_prevention_minutes += 0.5
+                self.session_manager.add_overload_minutes(0.5)
             should_charge = False
 
         target_amps = safe_amps if should_charge else 0
