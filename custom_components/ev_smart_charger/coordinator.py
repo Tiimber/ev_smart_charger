@@ -511,6 +511,15 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         current_time = datetime.now()
         sensor_soc = data.get("car_soc")
 
+        # Validate the underlying HA state so we don't treat unavailable/unknown as a real 0.0
+        # (our _fetch_sensor_data() uses 0.0 as a fallback for invalid states).
+        sensor_state_valid = True
+        car_soc_entity = self.conf_keys.get("car_soc")
+        if car_soc_entity:
+            state_obj = self.hass.states.get(car_soc_entity)
+            if state_obj is None or state_obj.state in [STATE_UNAVAILABLE, STATE_UNKNOWN]:
+                sensor_state_valid = False
+
         trust_sensor_period = False
         if self._refresh_trigger_timestamp:
             if (current_time - self._refresh_trigger_timestamp) < timedelta(minutes=5):
@@ -520,13 +529,32 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 ):
                     trust_sensor_period = True
 
-        if sensor_soc is not None:
+        sensor_soc_f = None
+        if sensor_state_valid and sensor_soc is not None:
+            try:
+                sensor_soc_f = float(sensor_soc)
+            except (TypeError, ValueError):
+                sensor_soc_f = None
+
+        if sensor_soc_f is not None:
+            # Primary rule: follow the sensor upwards (or on first reading).
             if (
-                sensor_soc > self._virtual_soc
+                sensor_soc_f > self._virtual_soc
                 or self._virtual_soc == 0.0
                 or trust_sensor_period
             ):
-                self._virtual_soc = float(sensor_soc)
+                self._virtual_soc = sensor_soc_f
+            else:
+                # If the real sensor reports a LOWER SoC, we still want to resync in cases
+                # where the estimator got ahead (or the vehicle integration corrected itself).
+                drop = self._virtual_soc - sensor_soc_f
+                significant_drop = drop >= 5.0
+
+                # When we're not actively charging, the estimator is not needed; always trust
+                # a valid lower sensor value.
+                not_actively_charging = self._last_applied_state != "charging"
+                if not_actively_charging or significant_drop:
+                    self._virtual_soc = sensor_soc_f
 
         if self._last_applied_state == "charging":
             ch_l1 = data.get("ch_l1", 0.0)

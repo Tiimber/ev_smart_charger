@@ -80,3 +80,82 @@ def test_fetch_sensor_data_handles_unavailable(pkg_loader, hass_mock):
     assert data["p1_l1"] == 0.0
     assert data["ch_l1"] == 0.0
     assert data.get("zap_limit_value", 0.0) == 0.0
+
+
+def test_virtual_soc_resyncs_down_when_paused(pkg_loader, hass_mock):
+    coordinator_mod = pkg_loader("coordinator")
+    const = pkg_loader("const")
+
+    class State:
+        def __init__(self, state, attributes=None):
+            self.state = state
+            self.attributes = attributes or {}
+
+    hass_mock.states = type(
+        "S",
+        (),
+        {
+            "get": lambda self, e: {
+                "sensor.car_soc": State("58"),
+            }.get(e)
+        },
+    )()
+
+    class Entry:
+        def __init__(self):
+            self.options = {}
+            self.data = {
+                const.CONF_CAR_SOC_SENSOR: "sensor.car_soc",
+                const.CONF_MAX_FUSE: const.DEFAULT_MAX_FUSE,
+                const.CONF_CHARGER_LOSS: const.DEFAULT_LOSS,
+                const.CONF_CAR_CAPACITY: const.DEFAULT_CAPACITY,
+            }
+            self.entry_id = "test"
+
+    coord = coordinator_mod.EVSmartChargerCoordinator(hass_mock, Entry())
+    coord._virtual_soc = 82.0
+    coord._last_applied_state = "paused"
+
+    coord._update_virtual_soc({"car_soc": 58.0})
+    assert coord._virtual_soc == 58.0
+
+
+def test_virtual_soc_resyncs_down_on_significant_drop_while_charging(pkg_loader, hass_mock):
+    coordinator_mod = pkg_loader("coordinator")
+    const = pkg_loader("const")
+
+    class State:
+        def __init__(self, state, attributes=None):
+            self.state = state
+            self.attributes = attributes or {}
+
+    hass_mock.states = type(
+        "S",
+        (),
+        {
+            "get": lambda self, e: {
+                "sensor.car_soc": State("58"),
+            }.get(e)
+        },
+    )()
+
+    class Entry:
+        def __init__(self):
+            self.options = {}
+            self.data = {
+                const.CONF_CAR_SOC_SENSOR: "sensor.car_soc",
+                const.CONF_MAX_FUSE: const.DEFAULT_MAX_FUSE,
+                const.CONF_CHARGER_LOSS: const.DEFAULT_LOSS,
+                const.CONF_CAR_CAPACITY: const.DEFAULT_CAPACITY,
+            }
+            self.entry_id = "test"
+
+    coord = coordinator_mod.EVSmartChargerCoordinator(hass_mock, Entry())
+    coord._virtual_soc = 82.0
+    coord._last_applied_state = "charging"
+
+    # Ensure the estimator portion doesn't add energy in this unit test.
+    coord._last_applied_amps = -1
+
+    coord._update_virtual_soc({"car_soc": 58.0, "ch_l1": 0.0, "ch_l2": 0.0, "ch_l3": 0.0})
+    assert coord._virtual_soc == 58.0
