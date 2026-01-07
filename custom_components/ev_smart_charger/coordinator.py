@@ -398,8 +398,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning(f"Failed to fetch calendar events: {e}")
 
             await self._handle_plugged_event(data["car_plugged"], data)
-            self._update_virtual_soc(data)
+            trust_sensor_period = self._update_virtual_soc(data)
             data["car_soc"] = self._virtual_soc
+            data["soc_sensor_refresh"] = trust_sensor_period
 
             # Delegate Logic to Planner
             data["max_available_current"] = calculate_load_balancing(
@@ -584,6 +585,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                         self._virtual_soc = 100.0
 
         self._last_update_time = current_time
+        return trust_sensor_period
 
     async def _apply_charger_control(self, data: dict, plan: dict):
         if datetime.now() - self._startup_time < timedelta(minutes=2):
@@ -656,11 +658,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             if target_amps > 0:
                 self.session_manager.mark_charging_in_interval()
 
-            if (
-                desired_state != self._last_applied_state
-                or target_amps != self._last_applied_amps
-            ):
+            if desired_state != self._last_applied_state:
                 self._add_log(f"Setting charger to {target_amps}A")
+            elif target_amps != self._last_applied_amps:
+                self._add_log(f"Adjusting charger to {target_amps}A (Load Balancing)")
+            
             if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):

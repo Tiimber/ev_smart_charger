@@ -112,13 +112,19 @@ def generate_report_image(report: dict, file_path: str):
     if history:
         current_block = None
         for i, point in enumerate(history):
+            # Track SoC sensor refreshes within blocks
+            soc_refresh = point.get("soc_sensor_refresh", False)
+            
             if point["charging"] == 1:
                 if current_block is None:
                     current_block = {
                         "start": point["time"],
                         "soc_start": point["soc"],
                         "soc_end": point["soc"],
+                        "soc_refreshes": [],
                     }
+                if soc_refresh:
+                    current_block["soc_refreshes"].append(point["time"])
                 current_block["soc_end"] = point["soc"]
                 current_block["end"] = point["time"]
             else:
@@ -127,6 +133,25 @@ def generate_report_image(report: dict, file_path: str):
                     current_block = None
         if current_block:
             charging_blocks.append(current_block)
+
+    # Merge blocks with gaps ≤ 2 minutes
+    merged_blocks = []
+    for block in charging_blocks:
+        if not merged_blocks:
+            merged_blocks.append(block)
+        else:
+            last = merged_blocks[-1]
+            last_end = datetime.fromisoformat(last["end"])
+            curr_start = datetime.fromisoformat(block["start"])
+            gap = (curr_start - last_end).total_seconds() / 60.0
+            if gap <= 2.0:
+                # Merge: extend last block
+                last["end"] = block["end"]
+                last["soc_end"] = block["soc_end"]
+                last["soc_refreshes"].extend(block["soc_refreshes"])
+            else:
+                merged_blocks.append(block)
+    charging_blocks = merged_blocks
 
     text_section_height = 600 + (len(charging_blocks) * 35)
     height = text_section_height + 400
@@ -175,9 +200,14 @@ def generate_report_image(report: dict, file_path: str):
             end_dt = datetime.fromisoformat(block["end"])
             start_str = start_dt.strftime("%H:%M")
             end_str = end_dt.strftime("%H:%M")
-            line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%)"
+            refresh_note = " *" if block.get("soc_refreshes") else ""
+            line = f"- {start_str} to {end_str} ({int(block['soc_start'])}% -> {int(block['soc_end'])}%){refresh_note}"
             draw.text((40, y), line, font=font_small, fill="black")
             y += 30
+        # Add legend if any blocks have sensor refresh
+        if any(block.get("soc_refreshes") for block in charging_blocks):
+            draw.text((40, y), "* SoC refreshed from sensor", font=font_small, fill="gray")
+            y += 25
     else:
         draw.text((30, y), "No charging recorded.", font=font_text, fill="black")
         y += 40
@@ -206,6 +236,30 @@ def generate_report_image(report: dict, file_path: str):
         count = len(history)
         bar_w_float = graph_draw_width / max(1, count)
 
+        # Group charging bars with gaps ≤2 min to draw as continuous blocks
+        charging_bar_ranges = []
+        current_range = None
+        for i, point in enumerate(history):
+            if point["charging"] == 1:
+                if current_range is None:
+                    current_range = {"start_idx": i, "end_idx": i, "last_time": point["time"]}
+                else:
+                    last_t = datetime.fromisoformat(current_range["last_time"])
+                    curr_t = datetime.fromisoformat(point["time"])
+                    gap = (curr_t - last_t).total_seconds() / 60.0
+                    if gap <= 2.0:
+                        current_range["end_idx"] = i
+                        current_range["last_time"] = point["time"]
+                    else:
+                        charging_bar_ranges.append(current_range)
+                        current_range = {"start_idx": i, "end_idx": i, "last_time": point["time"]}
+            else:
+                if current_range:
+                    charging_bar_ranges.append(current_range)
+                    current_range = None
+        if current_range:
+            charging_bar_ranges.append(current_range)
+
         for i, point in enumerate(history):
             x0 = margin_left + (i * bar_w_float)
             x1 = margin_left + ((i + 1) * bar_w_float)
@@ -216,12 +270,15 @@ def generate_report_image(report: dict, file_path: str):
                 [x0, graph_bottom - p_h, x1, graph_bottom], fill="#808080", outline=None
             )
 
-            if point["charging"] == 1:
-                draw.rectangle(
-                    [x0, graph_bottom - 20, x1, graph_bottom],
-                    fill="black",
-                    outline=None,
-                )
+        # Draw merged charging bar ranges
+        for bar_range in charging_bar_ranges:
+            x0 = margin_left + (bar_range["start_idx"] * bar_w_float)
+            x1 = margin_left + ((bar_range["end_idx"] + 1) * bar_w_float)
+            draw.rectangle(
+                [x0, graph_bottom - 20, x1, graph_bottom],
+                fill="black",
+                outline=None,
+            )
 
         # Axes drawing...
         draw.line(

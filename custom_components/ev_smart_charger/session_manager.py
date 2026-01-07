@@ -133,6 +133,7 @@ class SessionManager:
             "amps": last_applied_amps,
             "charging": is_charging,
             "price": adjusted_price,
+            "soc_sensor_refresh": data.get("soc_sensor_refresh", False),
         }
 
         self.current_session["history"].append(point)
