@@ -659,11 +659,6 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 self.session_manager.mark_charging_in_interval()
 
             if desired_state != self._last_applied_state:
-                self._add_log(f"Setting charger to {target_amps}A")
-            elif target_amps != self._last_applied_amps:
-                self._add_log(f"Adjusting charger to {target_amps}A (Load Balancing)")
-            
-            if desired_state != self._last_applied_state:
                 try:
                     if self.conf_keys.get("zap_switch"):
                         await self.hass.services.async_call(
@@ -676,6 +671,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                             "CHARGING" if target_amps > 0 else "MAINTENANCE (0A)"
                         )
                         self._add_log(f"Switched Charging state to: {state_msg}")
+                        self._add_log(f"Setting charger to {target_amps}A")
                     elif self.conf_keys.get("zap_resume"):
                         await self.hass.services.async_call(
                             "button",
@@ -684,6 +680,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                             blocking=True,
                         )
                         self._add_log("Sent Resume command")
+                        self._add_log(f"Setting charger to {target_amps}A")
                     self._last_applied_state = desired_state
                 except Exception as e:
                     _LOGGER.error(f"Failed to switch Zaptec state to CHARGING: {e}")
@@ -702,7 +699,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                     self._last_applied_amps = target_amps
                     if target_amps > 0:
                         self._add_log(
-                            f"Load Balancing: Set Zaptec limit to {target_amps}A"
+                            f"Adjusted charger to {target_amps}A (Load Balancing)"
                         )
                 except Exception as e:
                     _LOGGER.error(f"Failed to set Zaptec limit: {e}")
