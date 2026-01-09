@@ -121,6 +121,8 @@ def test_virtual_soc_resyncs_down_when_paused(pkg_loader, hass_mock):
 
 
 def test_virtual_soc_resyncs_down_on_significant_drop_while_charging(pkg_loader, hass_mock):
+    """During active charging, ignore lower sensor values (they may be stale).
+    Only trust them during force refresh period or when not charging."""
     coordinator_mod = pkg_loader("coordinator")
     const = pkg_loader("const")
 
@@ -158,7 +160,8 @@ def test_virtual_soc_resyncs_down_on_significant_drop_while_charging(pkg_loader,
     coord._last_applied_amps = -1
 
     coord._update_virtual_soc({"car_soc": 58.0, "ch_l1": 0.0, "ch_l2": 0.0, "ch_l3": 0.0})
-    assert coord._virtual_soc == 58.0
+    # During active charging, ignore lower sensor values (they may be stale)
+    assert coord._virtual_soc == 82.0
 
 
 def test_trigger_report_generation_uses_session_manager(pkg_loader, hass_mock):

@@ -547,16 +547,15 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             ):
                 self._virtual_soc = sensor_soc_f
             else:
-                # If the real sensor reports a LOWER SoC, we still want to resync in cases
-                # where the estimator got ahead (or the vehicle integration corrected itself).
-                drop = self._virtual_soc - sensor_soc_f
-                significant_drop = drop >= 5.0
-
-                # When we're not actively charging, the estimator is not needed; always trust
-                # a valid lower sensor value.
-                not_actively_charging = self._last_applied_state != "charging"
-                if not_actively_charging or significant_drop:
+                # If the real sensor reports a LOWER SoC during active charging, ignore it
+                # unless it's from a forced refresh (trust_sensor_period).
+                # The sensor might be reporting stale/cached values while charging.
+                actively_charging = self._last_applied_state == "charging"
+                
+                if not actively_charging:
+                    # When not charging, trust lower sensor values (vehicle may have been driven)
                     self._virtual_soc = sensor_soc_f
+                # else: ignore lower sensor values during charging; rely on virtual estimator
 
         if self._last_applied_state == "charging":
             ch_l1 = data.get("ch_l1", 0.0)
