@@ -47,6 +47,13 @@ def calculate_load_balancing(data: dict, max_fuse: float) -> float:
     max_house_current = max(house_l1, house_l2, house_l3)
     buffer = max(1.0, max_fuse * 0.05)
     available = max_fuse - max_house_current - buffer
+    
+    _LOGGER.debug(
+        "⚡ Load Balancing: P1=[%.1fA, %.1fA, %.1fA] Charger=[%.1fA, %.1fA, %.1fA] "
+        "House=[%.1fA, %.1fA, %.1fA] Max=%.1fA Buffer=%.1fA → Available=%.1fA",
+        p1_l1, p1_l2, p1_l3, ch_l1, ch_l2, ch_l3,
+        house_l1, house_l2, house_l3, max_house_current, buffer, available
+    )
 
     return max(0.0, available)
 
