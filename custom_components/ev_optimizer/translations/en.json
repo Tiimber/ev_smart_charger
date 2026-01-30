@@ -1,0 +1,193 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EV Smart Charger Setup",
+        "description": "This wizard will guide you through setting up your EV Smart Charger."
+      },
+      "charger": {
+        "title": "1. Charger Setup",
+        "description": "Configure your Zaptec charger entities. The **Switch** is the preferred control method.",
+        "data": {
+          "zaptec_current_limiter": "Current Limiter",
+          "zaptec_switch": "Charging Switch",
+          "zaptec_resume_button": "Resume Button",
+          "zaptec_stop_button": "Stop Button"
+        },
+        "data_description": {
+          "zaptec_current_limiter": "The entity that controls the maximum charging current (Amps).",
+          "zaptec_switch": "The main On/Off switch for the charger (Recommended). If set, buttons are ignored.",
+          "zaptec_resume_button": "Fallback: Entity to START charging if no switch is available.",
+          "zaptec_stop_button": "Fallback: Entity to STOP charging if no switch is available."
+        }
+      },
+      "car": {
+        "title": "2. Car Setup",
+        "description": "Configure Car sensors and integration services.\n\n**Advanced Control:** If your car integration supports services to set charge limits or force updates (like Kia/Hyundai), configure them here.",
+        "data": {
+          "car_soc_sensor": "Car Battery % (SoC)",
+          "car_plugged_sensor": "Plugged In Sensor",
+          "car_capacity": "Battery Size (kWh)",
+          "car_charging_level_entity": "Option A: Limit Number Entity",
+          "car_entity_id": "Vehicle Entity / Device",
+          "car_limit_service": "Service: Set Charge Limit",
+          "car_refresh_action": "Service: Force Refresh",
+          "car_refresh_interval": "Refresh Frequency"
+        },
+        "data_description": {
+          "car_soc_sensor": "Sensor indicating the current battery percentage of the car.",
+          "car_plugged_sensor": "Binary sensor indicating if the charging cable is connected.",
+          "car_capacity": "The total usable battery capacity of your EV.",
+          "car_charging_level_entity": "Simple method: Entity to set the charge limit (e.g. number.kona_charge_limit).",
+          "car_entity_id": "The Vehicle Device (or Entity) to target for the services below.",
+          "car_limit_service": "Optional: Service name to set limits (e.g. 'kia_uvo.set_charge_limits'). Uses the Vehicle Entity above.",
+          "car_refresh_action": "Optional: Service name to force data update (e.g. 'kia_uvo.force_update'). Uses the Vehicle Entity above.",
+          "car_refresh_interval": "How often to force a refresh while plugged in."
+        }
+      },
+      "meter": {
+        "title": "3. Electricity Meter",
+        "description": "Configure your P1 meter sensors and Main Fuse size.",
+        "data": {
+          "p1_l1_sensor": "House Current L1",
+          "p1_l2_sensor": "House Current L2",
+          "p1_l3_sensor": "House Current L3",
+          "charger_current_l1": "Charger Current L1",
+          "charger_current_l2": "Charger Current L2",
+          "charger_current_l3": "Charger Current L3",
+          "max_fuse": "Main Fuse Size"
+        },
+        "data_description": {
+          "p1_l1_sensor": "Real-time current (Amps) on Phase 1 from your main meter.",
+          "p1_l2_sensor": "Real-time current (Amps) on Phase 2 from your main meter.",
+          "p1_l3_sensor": "Real-time current (Amps) on Phase 3 from your main meter.",
+          "charger_current_l1": "Optional: Specific current usage of the charger (L1). Helps calculate net house load.",
+          "charger_current_l2": "Optional: Specific current usage of the charger (L2).",
+          "charger_current_l3": "Optional: Specific current usage of the charger (L3).",
+          "max_fuse": "The size of your main household fuse (Amps) to prevent tripping."
+        }
+      },
+      "price_calendar": {
+        "title": "4. Price & Planning",
+        "description": "Configure Electricity Prices, Calendar integration, and general settings.",
+        "data": {
+          "price_sensor": "Nordpool Price Sensor",
+          "calendar_entity": "Planning Calendar",
+          "charger_loss": "Charger Efficiency Loss",
+          "currency": "Currency"
+        },
+        "data_description": {
+          "price_sensor": "Optional: Nordpool sensor for spot prices. If empty, runs in simple Load Balancing mode.",
+          "calendar_entity": "Optional: Local Calendar to read for departure times and target SoC (e.g. 'Trip 90%').",
+          "charger_loss": "Estimated energy loss during charging (usually 5-10%).",
+          "currency": "Currency symbol to display in cost summaries."
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure EV Smart Charger",
+        "description": "Select which settings you want to modify:",
+        "menu_options": {
+          "charger": "Charger Settings",
+          "car": "Car Settings",
+          "meter": "Meter & Fuse Settings",
+          "price_calendar": "Price & Planning"
+        }
+      },
+      "charger": {
+        "title": "Charger Settings",
+        "description": "Update Zaptec charger entities.",
+        "data": {
+          "zaptec_current_limiter": "Current Limiter",
+          "zaptec_switch": "Charging Switch",
+          "zaptec_resume_button": "Resume Button",
+          "zaptec_stop_button": "Stop Button"
+        },
+        "data_description": {
+          "zaptec_current_limiter": "The entity that controls the maximum charging current (Amps).",
+          "zaptec_switch": "The main On/Off switch for the charger (Recommended). If set, buttons are ignored.",
+          "zaptec_resume_button": "Fallback: Entity to START charging if no switch is available.",
+          "zaptec_stop_button": "Fallback: Entity to STOP charging if no switch is available."
+        }
+      },
+      "car": {
+        "title": "Car Settings",
+        "description": "Update Car sensors and limits.",
+        "data": {
+          "car_soc_sensor": "Car Battery % (SoC)",
+          "car_plugged_sensor": "Plugged In Sensor",
+          "car_capacity": "Battery Size (kWh)",
+          "car_charging_level_entity": "Option A: Limit Number Entity",
+          "car_entity_id": "Vehicle Entity / Device",
+          "car_limit_service": "Service: Set Charge Limit",
+          "car_refresh_action": "Service: Force Refresh",
+          "car_refresh_interval": "Refresh Frequency"
+        },
+        "data_description": {
+          "car_soc_sensor": "Sensor indicating the current battery percentage of the car.",
+          "car_plugged_sensor": "Binary sensor indicating if the charging cable is connected.",
+          "car_capacity": "The total usable battery capacity of your EV.",
+          "car_charging_level_entity": "Simple method: Entity to set the charge limit (e.g. number.kona_charge_limit).",
+          "car_entity_id": "The Vehicle Device (or Entity) to target for the services below.",
+          "car_limit_service": "Optional: Service name to set limits (e.g. 'kia_uvo.set_charge_limits'). Uses the Vehicle Entity above.",
+          "car_refresh_action": "Optional: Service name to force data update (e.g. 'kia_uvo.force_update'). Uses the Vehicle Entity above.",
+          "car_refresh_interval": "How often to force a refresh while plugged in."
+        }
+      },
+      "meter": {
+        "title": "Meter Settings",
+        "description": "Update P1 meter and fuse settings.",
+        "data": {
+          "p1_l1_sensor": "House Current L1",
+          "p1_l2_sensor": "House Current L2",
+          "p1_l3_sensor": "House Current L3",
+          "charger_current_l1": "Charger Current L1",
+          "charger_current_l2": "Charger Current L2",
+          "charger_current_l3": "Charger Current L3",
+          "max_fuse": "Main Fuse Size"
+        },
+        "data_description": {
+          "p1_l1_sensor": "Real-time current (Amps) on Phase 1 from your main meter.",
+          "p1_l2_sensor": "Real-time current (Amps) on Phase 2 from your main meter.",
+          "p1_l3_sensor": "Real-time current (Amps) on Phase 3 from your main meter.",
+          "charger_current_l1": "Optional: Specific current usage of the charger (L1). Helps calculate net house load.",
+          "charger_current_l2": "Optional: Specific current usage of the charger (L2).",
+          "charger_current_l3": "Optional: Specific current usage of the charger (L3).",
+          "max_fuse": "The size of your main household fuse (Amps) to prevent tripping."
+        }
+      },
+      "price_calendar": {
+        "title": "Price & Planning",
+        "description": "Update Price, Calendar, and General settings.",
+        "data": {
+          "price_sensor": "Nordpool Price Sensor",
+          "calendar_entity": "Planning Calendar",
+          "charger_loss": "Charger Efficiency Loss",
+          "currency": "Currency"
+        },
+        "data_description": {
+          "price_sensor": "Optional: Nordpool sensor for spot prices. If empty, runs in simple Load Balancing mode.",
+          "calendar_entity": "Optional: Local Calendar to read for departure times and target SoC (e.g. 'Trip 90%').",
+          "charger_loss": "Estimated energy loss during charging (usually 5-10%).",
+          "currency": "Currency symbol to display in cost summaries."
+        }
+      }
+    }
+  },
+  "selector": {
+    "car_refresh_interval": {
+      "options": {
+        "never": "Never",
+        "30_min": "Every 30 minutes",
+        "1_hour": "Every hour",
+        "2_hours": "Every 2 hours",
+        "3_hours": "Every 3 hours",
+        "4_hours": "Every 4 hours",
+        "at_target": "When target reached (Smart)"
+      }
+    }
+  }
+}
