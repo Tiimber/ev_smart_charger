@@ -24,6 +24,7 @@ async def async_setup_entry(
 class EVDepartureTime(CoordinatorEntity, TimeEntity):
     """Time entity for setting the standard daily departure time."""
 
+    _attr_has_entity_name = False
     _attr_name = "Standard Departure Time"
     _attr_unique_id = "ev_optimizer_departure_time"
     _attr_icon = "mdi:clock-out"
@@ -43,6 +44,7 @@ class EVDepartureTime(CoordinatorEntity, TimeEntity):
 class EVDepartureOverride(CoordinatorEntity, TimeEntity):
     """Time entity for overriding the next session's departure time."""
 
+    _attr_has_entity_name = False
     _attr_name = "Next Session Departure"
     _attr_unique_id = "ev_optimizer_departure_override"
     _attr_icon = "mdi:clock-fast"
