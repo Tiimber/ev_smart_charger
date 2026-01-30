@@ -1,4 +1,4 @@
-"""Config flow for EV Smart Charger integration."""
+"""Config flow for EV Optimizer integration."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ from .const import (
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for EV Smart Charger."""
+    """Handle a config flow for EV Optimizer."""
 
     VERSION = 1
 

@@ -1,4 +1,4 @@
-"""The EV Smart Charger integration."""
+"""The EV Optimizer integration."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ PLATFORMS: list[Platform] = [
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up EV Smart Charger from a config entry."""
+    """Set up EV Optimizer from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     # Initialize the Coordinator

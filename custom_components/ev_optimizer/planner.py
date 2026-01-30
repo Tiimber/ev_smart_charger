@@ -1,4 +1,4 @@
-"""Planning logic for EV Smart Charger."""
+"""Planning logic for EV Optimizer."""
 
 import logging
 import math

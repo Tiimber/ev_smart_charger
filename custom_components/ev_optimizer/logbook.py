@@ -13,7 +13,7 @@ def async_describe_events(hass, async_describe_event):
     def async_describe_logbook_event(event):
         """Describe a logbook event."""
         return {
-            "name": event.data.get(ATTR_NAME, "EV Smart Charger"),
+            "name": event.data.get(ATTR_NAME, "EV Optimizer"),
             "message": event.data.get("message"),
         }
 

@@ -37,7 +37,7 @@ CONF_CHARGER_CURRENT_L2 = "charger_current_l2"
 CONF_CHARGER_CURRENT_L3 = "charger_current_l3"
 
 # Defaults
-DEFAULT_NAME = "EV Smart Charger"
+DEFAULT_NAME = "EV Optimizer"
 DEFAULT_CAPACITY = 64.0
 DEFAULT_MAX_FUSE = 20.0
 DEFAULT_LOSS = 10.0

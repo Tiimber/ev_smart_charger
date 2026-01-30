@@ -1,4 +1,4 @@
-# Debugging Guide for EV Smart Charger
+# Debugging Guide for EV Optimizer
 
 This guide explains how to use the enhanced debugging features to diagnose issues with charging decisions.
 
@@ -16,9 +16,9 @@ Add this to your `configuration.yaml`:
 logger:
   default: info
   logs:
-    custom_components.ev_smart_charger: debug
-    custom_components.ev_smart_charger.planner: debug
-    custom_components.ev_smart_charger.coordinator: debug
+    custom_components.ev_optimizer: debug
+    custom_components.ev_optimizer.planner: debug
+    custom_components.ev_optimizer.coordinator: debug
 ```
 
 Restart Home Assistant. Now all charging decisions will be logged with detailed explanations.
@@ -59,21 +59,21 @@ When you need to share your exact situation for debugging:
 ### Method 1: Use the Button Entity
 
 1. Go to your Home Assistant dashboard
-2. Find: `button.ev_smart_charger_dump_debug_state`
+2. Find: `button.ev_optimizer_dump_debug_state`
 3. Press the button
 4. Check your Home Assistant logs
 
 ### Method 2: Use the Service
 
 1. Go to Developer Tools → Services
-2. Select service: `ev_smart_charger.dump_debug_state`
+2. Select service: `ev_optimizer.dump_debug_state`
 3. Call the service
 4. Check your Home Assistant logs
 
 ### Method 3: Via Automation/Script
 
 ```yaml
-service: ev_smart_charger.dump_debug_state
+service: ev_optimizer.dump_debug_state
 ```
 
 ## 4. Reading the Debug Dump
@@ -86,7 +86,7 @@ DEBUG STATE DUMP - Copy everything between the markers:
 ================================================================================
 {
   "timestamp": "2026-01-30T15:30:00",
-  "description": "Complete state dump for ev_smart_charger debugging/simulation",
+  "description": "Complete state dump for ev_optimizer debugging/simulation",
   "config_settings": {
     "max_fuse": 16.0,
     "charger_loss": 10.0,

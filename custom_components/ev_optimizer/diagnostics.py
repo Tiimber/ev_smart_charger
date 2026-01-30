@@ -1,4 +1,4 @@
-"""Diagnostics support for EV Smart Charger."""
+"""Diagnostics support for EV Optimizer."""
 from __future__ import annotations
 
 from typing import Any

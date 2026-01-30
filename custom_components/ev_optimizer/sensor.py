@@ -1,4 +1,4 @@
-"""Sensor platform for EV Smart Charger."""
+"""Sensor platform for EV Optimizer."""
 import math
 from datetime import datetime
 from homeassistant.components.sensor import SensorEntity
@@ -28,7 +28,7 @@ async def async_setup_entry(
     ])
 
 class EVSmartChargerBaseSensor(CoordinatorEntity, SensorEntity):
-    """Base class for EV Smart Charger sensors."""
+    """Base class for EV Optimizer sensors."""
 
     def __init__(self, coordinator):
         """Initialize."""

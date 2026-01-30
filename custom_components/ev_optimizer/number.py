@@ -1,4 +1,4 @@
-"""Number platform for EV Smart Charger."""
+"""Number platform for EV Optimizer."""
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -57,7 +57,7 @@ class EVNumberBase(CoordinatorEntity, NumberEntity):
         super().__init__(coordinator)
         self._key = key
         self._attr_name = name
-        self._attr_unique_id = f"ev_smart_{key}"
+        self._attr_unique_id = f"ev_optimizer_{key}"
         self._attr_native_min_value = min_val
         self._attr_native_max_value = max_val
         self._attr_native_step = step

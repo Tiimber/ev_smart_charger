@@ -1,4 +1,4 @@
-"""Time platform for EV Smart Charger."""
+"""Time platform for EV Optimizer."""
 from datetime import time
 from homeassistant.components.time import TimeEntity
 from homeassistant.config_entries import ConfigEntry
@@ -25,7 +25,7 @@ class EVDepartureTime(CoordinatorEntity, TimeEntity):
     """Time entity for setting the standard daily departure time."""
 
     _attr_name = "Standard Departure Time"
-    _attr_unique_id = "ev_smart_departure_time"
+    _attr_unique_id = "ev_optimizer_departure_time"
     _attr_icon = "mdi:clock-out"
 
     def __init__(self, coordinator):
@@ -44,7 +44,7 @@ class EVDepartureOverride(CoordinatorEntity, TimeEntity):
     """Time entity for overriding the next session's departure time."""
 
     _attr_name = "Next Session Departure"
-    _attr_unique_id = "ev_smart_departure_override"
+    _attr_unique_id = "ev_optimizer_departure_override"
     _attr_icon = "mdi:clock-fast"
 
     def __init__(self, coordinator):

@@ -1,4 +1,4 @@
-"""Image generation for EV Smart Charger."""
+"""Image generation for EV Optimizer."""
 
 import logging
 import math

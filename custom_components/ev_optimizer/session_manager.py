@@ -1,4 +1,4 @@
-"""Session Manager for EV Smart Charger."""
+"""Session Manager for EV Optimizer."""
 from __future__ import annotations
 
 import logging
@@ -69,7 +69,7 @@ class SessionManager:
         # Fire event for Logbook
         if self.hass:
             self.hass.bus.async_fire(
-                f"{DOMAIN}_log_event", {"message": message, "name": "EV Smart Charger"}
+                f"{DOMAIN}_log_event", {"message": message, "name": "EV Optimizer"}
             )
 
     def start_session(self, initial_soc: float):

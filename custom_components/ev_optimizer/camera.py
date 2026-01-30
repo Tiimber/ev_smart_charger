@@ -1,4 +1,4 @@
-"""Camera platform for EV Smart Charger."""
+"""Camera platform for EV Optimizer."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class EVReportCamera(CoordinatorEntity, Camera):
     @property
     def brand(self):
         """Return the camera brand."""
-        return "EV Smart Charger"
+        return "EV Optimizer"
 
     def camera_image(
         self, width: int | None = None, height: int | None = None

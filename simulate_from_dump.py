@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simulator for EV Smart Charger debugging.
+Simulator for EV Optimizer debugging.
 
 This script takes a debug dump JSON (from the dump_debug_state service)
 and simulates the charging decision locally, showing the exact logic flow.
@@ -32,7 +32,7 @@ def parse_time(time_str):
 def simulate_from_dump(dump_data):
     """Run the planner simulation with dumped data."""
     print("=" * 80)
-    print("EV Smart Charger - Simulation from Debug Dump")
+    print("EV Optimizer - Simulation from Debug Dump")
     print("=" * 80)
     print(f"Timestamp: {dump_data['timestamp']}")
     print()

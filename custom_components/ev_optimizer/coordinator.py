@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for EV Smart Charger."""
+"""DataUpdateCoordinator for EV Optimizer."""
 
 from __future__ import annotations
 

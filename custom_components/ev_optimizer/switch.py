@@ -1,4 +1,4 @@
-"""Switch platform for EV Smart Charger."""
+"""Switch platform for EV Optimizer."""
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -21,7 +21,7 @@ class EVSmartChargingSwitch(CoordinatorEntity, SwitchEntity):
     """Master switch for Smart Charging logic."""
 
     _attr_name = "Smart Charging Enabled"
-    _attr_unique_id = "ev_smart_charging_active"
+    _attr_unique_id = "ev_optimizer_charging_active"
     _attr_icon = "mdi:auto-fix"
 
     def __init__(self, coordinator):

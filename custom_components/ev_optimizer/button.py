@@ -1,4 +1,4 @@
-"""Button platform for EV Smart Charger."""
+"""Button platform for EV Optimizer."""
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
@@ -32,7 +32,7 @@ class EVRefreshButton(CoordinatorEntity, ButtonEntity):
     """Button to force a plan refresh."""
 
     _attr_name = "Refresh Charging Plan"
-    _attr_unique_id = "ev_smart_refresh_plan"
+    _attr_unique_id = "ev_optimizer_refresh_plan"
     _attr_icon = "mdi:refresh"
 
     async def async_press(self) -> None:
@@ -44,7 +44,7 @@ class EVClearOverrideButton(CoordinatorEntity, ButtonEntity):
     """Button to clear manual overrides and revert to smart logic."""
 
     _attr_name = "Clear Manual Override"
-    _attr_unique_id = "ev_smart_clear_override"
+    _attr_unique_id = "ev_optimizer_clear_override"
     _attr_icon = "mdi:restore-alert"
 
     async def async_press(self) -> None:
@@ -56,7 +56,7 @@ class EVGenerateReportButton(CoordinatorEntity, ButtonEntity):
     """Button to manually regenerate the last session report image."""
 
     _attr_name = "Regenerate Session Image"
-    _attr_unique_id = "ev_smart_regenerate_session"
+    _attr_unique_id = "ev_optimizer_regenerate_session"
     _attr_icon = "mdi:printer"
 
     async def async_press(self) -> None:
@@ -68,7 +68,7 @@ class EVGeneratePlanButton(CoordinatorEntity, ButtonEntity):
     """Button to manually regenerate the future charging plan image."""
 
     _attr_name = "Regenerate Plan Image"
-    _attr_unique_id = "ev_smart_regenerate_plan"
+    _attr_unique_id = "ev_optimizer_regenerate_plan"
     _attr_icon = "mdi:printer-eye"
 
     async def async_press(self) -> None:
@@ -80,7 +80,7 @@ class EVDumpDebugStateButton(CoordinatorEntity, ButtonEntity):
     """Button to dump complete debug state to logs."""
 
     _attr_name = "Dump Debug State"
-    _attr_unique_id = "ev_smart_dump_debug"
+    _attr_unique_id = "ev_optimizer_dump_debug"
     _attr_icon = "mdi:bug-check"
 
     async def async_press(self) -> None:

@@ -1,6 +1,6 @@
-# Testing EV Smart Charger
+# Testing EV Optimizer
 
-This directory contains tests for the EV Smart Charger integration.
+This directory contains tests for the EV Optimizer integration.
 
 ## Test Files
 
@@ -22,7 +22,7 @@ Integration test that actually executes `dump_debug_state` with mocked HA.
 
 **Run:**
 ```bash
-PYTHONPATH=/workspaces/ev_smart_charger python3 tests/test_dump_simple.py
+PYTHONPATH=/workspaces/ev_optimizer python3 tests/test_dump_simple.py
 ```
 
 **What it tests:**
@@ -48,7 +48,7 @@ Checks import statements and usage in coordinator.
 python3 verify_debug_dump.py
 
 # Integration test with mocking
-PYTHONPATH=/workspaces/ev_smart_charger python3 tests/test_dump_simple.py
+PYTHONPATH=/workspaces/ev_optimizer python3 tests/test_dump_simple.py
 
 # All pytest tests (requires homeassistant package)
 pytest tests/
