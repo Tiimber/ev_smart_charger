@@ -3,7 +3,7 @@ cards:
   - type: entities
     title: Settings
     entities:
-      - entity: time.standard_departure_time
+      - entity: time.ev_optimizer_standard_departure_time
       - entity: number.standard_target_soc
       - type: divider
       - entity: number.price_limit_low_cheap
@@ -15,6 +15,6 @@ cards:
   - type: entities
     title: Overrides
     entities:
-      - entity: time.next_session_departure
+      - entity: time.ev_optimizer_next_session_departure
       - entity: number.next_session_target_soc
       - entity: button.clear_manual_override
