@@ -24,6 +24,7 @@ async def async_setup_entry(
         EVPriceStatusSensor(coordinator),
         EVChargingPlanSensor(coordinator),
         EVSmartChargerLastSessionSensor(coordinator), # New Sensor
+        EVDebugDumpPathSensor(coordinator), # Debug dump file path
     ])
 
 class EVSmartChargerBaseSensor(CoordinatorEntity, SensorEntity):
@@ -148,3 +149,39 @@ class EVSmartChargerLastSessionSensor(EVSmartChargerBaseSensor):
             "graph_data": report.get("graph_data", []),
             "session_log": report.get("session_log", [])
         }
+
+
+class EVDebugDumpPathSensor(EVSmartChargerBaseSensor):
+    """Sensor showing the path to the debug dump file."""
+    _attr_name = "Debug Dump File"
+    _attr_unique_id = "ev_smart_charger_debug_dump_file"
+    _attr_icon = "mdi:file-document"
+
+    @property
+    def state(self):
+        """Return the URL to download the debug dump."""
+        return "/local/ev_smart_charger_debug_dump.json"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional info."""
+        import os
+        file_path = self.coordinator.hass.config.path("www", "ev_smart_charger_debug_dump.json")
+        file_exists = os.path.exists(file_path)
+        
+        attrs = {
+            "file_path": file_path,
+            "file_exists": file_exists,
+            "download_url": "/local/ev_smart_charger_debug_dump.json",
+        }
+        
+        if file_exists:
+            try:
+                stat = os.stat(file_path)
+                attrs["file_size_bytes"] = stat.st_size
+                attrs["last_modified"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
+            except:
+                pass
+        
+        return attrs
+

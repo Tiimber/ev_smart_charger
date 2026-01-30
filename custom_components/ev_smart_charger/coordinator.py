@@ -691,6 +691,17 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
 
             if target_amps != self._last_applied_amps and self.conf_keys["zap_limit"]:
                 try:
+                    # Cap at Zaptec entity's max value to prevent out-of-range errors
+                    zap_entity = self.hass.states.get(self.conf_keys["zap_limit"])
+                    if zap_entity and hasattr(zap_entity.attributes, 'get'):
+                        entity_max = zap_entity.attributes.get("max")
+                        if entity_max is not None:
+                            if target_amps > entity_max:
+                                _LOGGER.warning(
+                                    f"⚠️ Capping Zaptec limit from {target_amps}A to entity max {entity_max}A"
+                                )
+                                target_amps = entity_max
+                    
                     await self.hass.services.async_call(
                         "number",
                         "set_value",
@@ -915,6 +926,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         import json
         from datetime import datetime
         
+        _LOGGER.debug("🔍 Starting debug state dump...")
+        
         # Get current data snapshot
         data = self.data if self.data else {}
         
@@ -989,15 +1002,35 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             "entity_ids": {k: v for k, v in self.conf_keys.items() if v},
         }
         
-        # Format as JSON for easy copy/paste
+        # Format as JSON
         json_dump = json.dumps(debug_dump, indent=2, default=str)
         
-        _LOGGER.info("=" * 80)
-        _LOGGER.info("DEBUG STATE DUMP - Copy everything between the markers:")
-        _LOGGER.info("=" * 80)
-        _LOGGER.info(json_dump)
-        _LOGGER.info("=" * 80)
-        _LOGGER.info("End of debug dump. Copy the JSON above to share for debugging.")
-        _LOGGER.info("=" * 80)
+        # Save to file
+        file_path = self.hass.config.path("www", "ev_smart_charger_debug_dump.json")
+        _LOGGER.debug(f"💾 Saving debug dump to: {file_path}")
+        
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w') as f:
+                f.write(json_dump)
+            _LOGGER.info(f"✅ Debug dump saved to: {file_path}")
+            _LOGGER.info(f"📥 Download at: /local/ev_smart_charger_debug_dump.json")
+            
+            # Also log to console for easy copy/paste
+            _LOGGER.info("=" * 80)
+            _LOGGER.info("DEBUG STATE DUMP - Also saved to file above")
+            _LOGGER.info("=" * 80)
+            _LOGGER.info(json_dump)
+            _LOGGER.info("=" * 80)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ Failed to save debug dump to file: {e}")
+            # Still log it even if file save fails
+            _LOGGER.info("=" * 80)
+            _LOGGER.info("DEBUG STATE DUMP (file save failed, logging only)")
+            _LOGGER.info("=" * 80)
+            _LOGGER.info(json_dump)
+            _LOGGER.info("=" * 80)
         
         return debug_dump
