@@ -1378,7 +1378,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.info(f"📅 Tomorrow's prices detected at {arrival_time}. Learning pattern ({len(price_arrivals)} samples).")
             
             # Save learning state
-            self._save_learning_state()
+            self._save_data()
         
         self._last_tomorrow_valid = tomorrow_valid
     
