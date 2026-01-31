@@ -202,3 +202,198 @@ def test_trigger_report_generation_uses_session_manager(pkg_loader, hass_mock):
     # Should not raise (this used to crash looking for coord.current_session)
     import asyncio
     asyncio.get_event_loop().run_until_complete(coord.async_trigger_report_generation())
+
+
+def test_virtual_soc_ignores_wobble_during_charging(pkg_loader, hass_mock):
+    """Test that virtual SoC doesn't wobble from stale sensor updates during charging."""
+    from datetime import timedelta
+    
+    const = pkg_loader("const")
+    coordinator_mod = pkg_loader("coordinator")
+    
+    # Setup coordinator with all required config fields
+    entry_mock = type("E", (), {
+        "entry_id": "test123",
+        "data": {
+            "car_soc": "sensor.car_soc",
+            "car_plugged": "binary_sensor.car_plugged",
+            "price": "sensor.electricity_price",
+            "charger_amps": "number.charger_amps",
+            "ch_l1": "sensor.charger_l1",
+            "ch_l2": "sensor.charger_l2",
+            "ch_l3": "sensor.charger_l3",
+            const.CONF_CAR_CAPACITY: 75.0,
+            const.CONF_CHARGER_LOSS: 10.0,
+            const.CONF_MAX_FUSE: 25.0,
+            const.CONF_PRICE_SENSOR: True,
+            const.CONF_CURRENCY: "SEK",
+        },
+        "options": {},
+    })()
+    
+    coord = coordinator_mod.EVSmartChargerCoordinator(hass_mock, entry_mock)
+    coord._data_loaded = True
+    coord._startup_time = datetime.now() - timedelta(minutes=10)
+    
+    # Initialize: actively charging, virtual SoC at 65%
+    coord._virtual_soc = 65.0
+    coord._last_applied_state = "charging"
+    coord._last_applied_amps = 16.0
+    coord._last_update_time = datetime.now() - timedelta(seconds=30)
+    coord._refresh_trigger_timestamp = None
+    coord._soc_before_refresh = 65.0
+    coord.car_capacity = 75.0
+    
+    # Mock sensor returning stale lower value
+    class State:
+        def __init__(self, state):
+            self.state = state
+    
+    hass_mock.states = type("S", (), {"get": lambda self, e: State("64.0")})()
+    
+    data = {
+        "car_soc": 64.0,
+        "car_plugged": True,
+        "ch_l1": 16.0,
+        "ch_l2": 16.0,
+        "ch_l3": 16.0,
+    }
+    
+    # Update virtual SoC
+    trust_sensor = coord._update_virtual_soc(data)
+    
+    # Virtual SoC should have incremented from charging, NOT reset to stale sensor
+    assert coord._virtual_soc > 65.0, "Virtual SoC should increase from charging"
+    assert coord._virtual_soc != 64.0, "Virtual SoC should NOT use stale sensor during charging"
+    assert not trust_sensor, "Not in forced refresh window"
+    
+    # Simulate sensor wobbling UP (delayed update)
+    current_virtual = coord._virtual_soc
+    hass_mock.states = type("S", (), {"get": lambda self, e: State("66.0")})()
+    data["car_soc"] = 66.0
+    coord._last_update_time = datetime.now() - timedelta(seconds=30)
+    
+    trust_sensor = coord._update_virtual_soc(data)
+    
+    # Virtual SoC should continue smooth increment, NOT jump to delayed sensor
+    assert coord._virtual_soc > current_virtual, "Virtual SoC should continue incrementing"
+    assert coord._virtual_soc != 66.0, "Virtual SoC should NOT jump to sensor (prevents wobbling)"
+
+
+def test_virtual_soc_accepts_sensor_during_forced_refresh(pkg_loader, hass_mock):
+    """Test that virtual SoC accepts sensor updates during forced refresh window."""
+    from datetime import timedelta
+    
+    const = pkg_loader("const")
+    coordinator_mod = pkg_loader("coordinator")
+    
+    entry_mock = type("E", (), {
+        "entry_id": "test123",
+        "data": {
+            "car_soc": "sensor.car_soc",
+            "car_plugged": "binary_sensor.car_plugged",
+            "price": "sensor.electricity_price",
+            "charger_amps": "number.charger_amps",
+            "ch_l1": "sensor.charger_l1",
+            "ch_l2": "sensor.charger_l2",
+            "ch_l3": "sensor.charger_l3",
+            const.CONF_CAR_CAPACITY: 75.0,
+            const.CONF_CHARGER_LOSS: 10.0,
+            const.CONF_MAX_FUSE: 25.0,
+            const.CONF_PRICE_SENSOR: True,
+            const.CONF_CURRENCY: "SEK",
+        },
+        "options": {},
+    })()
+    
+    coord = coordinator_mod.EVSmartChargerCoordinator(hass_mock, entry_mock)
+    coord._data_loaded = True
+    coord._startup_time = datetime.now() - timedelta(minutes=10)
+    
+    # Actively charging with forced refresh active
+    coord._virtual_soc = 65.0
+    coord._last_applied_state = "charging"
+    coord._last_applied_amps = 16.0
+    coord._last_update_time = datetime.now() - timedelta(seconds=30)
+    coord._soc_before_refresh = 65.0
+    coord._refresh_trigger_timestamp = datetime.now() - timedelta(minutes=1)
+    coord.car_capacity = 75.0
+    
+    class State:
+        def __init__(self, state):
+            self.state = state
+    
+    hass_mock.states = type("S", (), {"get": lambda self, e: State("68.5")})()
+    
+    data = {
+        "car_soc": 68.5,
+        "car_plugged": True,
+        "ch_l1": 16.0,
+        "ch_l2": 16.0,
+        "ch_l3": 16.0,
+    }
+    
+    trust_sensor = coord._update_virtual_soc(data)
+    
+    # Virtual SoC SHOULD accept fresh sensor value during forced refresh
+    # Note: it will accept 68.5 and then add a small increment from ongoing charging
+    assert trust_sensor, "Should be in forced refresh window"
+    assert coord._virtual_soc >= 68.5, "Should accept sensor value as baseline during forced refresh"
+    assert coord._virtual_soc < 69.0, "Should only add small increment from 30s of charging"
+
+
+def test_virtual_soc_trusts_sensor_when_not_charging(pkg_loader, hass_mock):
+    """Test that virtual SoC always trusts sensor when not actively charging."""
+    from datetime import timedelta
+    
+    const = pkg_loader("const")
+    coordinator_mod = pkg_loader("coordinator")
+    
+    entry_mock = type("E", (), {
+        "entry_id": "test123",
+        "data": {
+            "car_soc": "sensor.car_soc",
+            "car_plugged": "binary_sensor.car_plugged",
+            "price": "sensor.electricity_price",
+            "charger_amps": "number.charger_amps",
+            "ch_l1": "sensor.charger_l1",
+            "ch_l2": "sensor.charger_l2",
+            "ch_l3": "sensor.charger_l3",
+            const.CONF_CAR_CAPACITY: 75.0,
+            const.CONF_CHARGER_LOSS: 10.0,
+            const.CONF_MAX_FUSE: 25.0,
+            const.CONF_PRICE_SENSOR: True,
+            const.CONF_CURRENCY: "SEK",
+        },
+        "options": {},
+    })()
+    
+    coord = coordinator_mod.EVSmartChargerCoordinator(hass_mock, entry_mock)
+    coord._data_loaded = True
+    coord._startup_time = datetime.now() - timedelta(minutes=10)
+    
+    # Not charging, virtual SoC higher than sensor (car was driven)
+    coord._virtual_soc = 80.0
+    coord._last_applied_state = "paused"
+    coord._last_update_time = datetime.now() - timedelta(seconds=30)
+    coord._refresh_trigger_timestamp = None
+    coord.car_capacity = 75.0
+    
+    class State:
+        def __init__(self, state):
+            self.state = state
+    
+    hass_mock.states = type("S", (), {"get": lambda self, e: State("75.0")})()
+    
+    data = {
+        "car_soc": 75.0,
+        "car_plugged": True,
+        "ch_l1": 0.0,
+        "ch_l2": 0.0,
+        "ch_l3": 0.0,
+    }
+    
+    coord._update_virtual_soc(data)
+    
+    # Virtual SoC should trust lower sensor when not charging
+    assert coord._virtual_soc == 75.0, "Should trust sensor when not charging, even if lower"

@@ -128,6 +128,7 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         # Virtual SoC Estimator
         self._virtual_soc = 0.0
         self._last_update_time = datetime.now()
+        self._last_sensor_soc = None  # Track last raw sensor value to detect real updates
 
         # New Flag: Tracks if user explicitly moved the Next Session slider
         self.manual_override_active = False
@@ -836,24 +837,40 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             except (TypeError, ValueError):
                 sensor_soc_f = None
 
+        actively_charging = self._last_applied_state == "charging"
+        
+        # Check if sensor value actually changed (indicating a real update from the car)
+        sensor_value_changed = (
+            sensor_soc_f is not None 
+            and self._last_sensor_soc is not None 
+            and abs(sensor_soc_f - self._last_sensor_soc) > 0.1  # More than 0.1% difference
+        )
+        
         if sensor_soc_f is not None:
-            # Primary rule: follow the sensor upwards (or on first reading).
-            if (
-                sensor_soc_f > self._virtual_soc
-                or self._virtual_soc == 0.0
-                or trust_sensor_period
-            ):
-                self._virtual_soc = sensor_soc_f
-            else:
-                # If the real sensor reports a LOWER SoC during active charging, ignore it
-                # unless it's from a forced refresh (trust_sensor_period).
-                # The sensor might be reporting stale/cached values while charging.
-                actively_charging = self._last_applied_state == "charging"
-                
-                if not actively_charging:
-                    # When not charging, trust lower sensor values (vehicle may have been driven)
+            # During active charging: only trust sensor when:
+            # 1. It's a forced refresh window, OR
+            # 2. The sensor value actually changed (real update from car), OR
+            # 3. Virtual SoC is uninitialized
+            # This prevents wobbling from re-reading the same stale sensor value
+            if actively_charging:
+                if trust_sensor_period or sensor_value_changed or self._virtual_soc == 0.0:
                     self._virtual_soc = sensor_soc_f
-                # else: ignore lower sensor values during charging; rely on virtual estimator
+                    _LOGGER.debug(
+                        f"Virtual SoC updated to {sensor_soc_f:.1f}% during charging "
+                        f"(forced_refresh={trust_sensor_period}, value_changed={sensor_value_changed})"
+                    )
+                # else: ignore unchanged sensor value during charging; rely purely on virtual estimator
+            else:
+                # When not charging: always trust sensor (could be driven, charged elsewhere, etc.)
+                # Follow sensor upwards, downwards, or on first reading
+                if sensor_soc_f > self._virtual_soc or self._virtual_soc == 0.0:
+                    self._virtual_soc = sensor_soc_f
+                else:
+                    # Sensor reports lower value while not charging - trust it (vehicle may have been driven)
+                    self._virtual_soc = sensor_soc_f
+            
+            # Update last sensor value for next comparison
+            self._last_sensor_soc = sensor_soc_f
 
         if self._last_applied_state == "charging":
             ch_l1 = data.get("ch_l1", 0.0)
