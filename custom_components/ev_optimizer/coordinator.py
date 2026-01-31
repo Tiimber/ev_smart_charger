@@ -57,6 +57,7 @@ from .const import (
     LEARNING_LOCKED,
     LEARNING_HISTORY,
     LEARNING_LAST_REFRESH,
+    LEARNING_PRICE_ARRIVAL,
     REFRESH_1_HOUR,
     REFRESH_2_HOURS,
     REFRESH_3_HOURS,
@@ -169,7 +170,11 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             LEARNING_LOCKED: False,
             LEARNING_HISTORY: [],
             LEARNING_LAST_REFRESH: None,
+            LEARNING_PRICE_ARRIVAL: [],  # Track when tomorrow's prices arrive
         }
+        
+        # Track when we last saw tomorrow's prices
+        self._last_tomorrow_valid = False
 
         # Key Mappings
         self.conf_keys = {
@@ -422,6 +427,9 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             data = self._fetch_sensor_data()
             data.update(self.user_settings)
 
+            # Track when tomorrow's prices become available
+            self._track_price_arrival(data.get("price_data", {}))
+
             cal_entity = self.conf_keys.get("calendar")
             data["calendar_events"] = []
             if cal_entity:
@@ -454,10 +462,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             )
             data["current_price_status"] = analyze_prices(data["price_data"])
 
+            # Get expected price arrival time from learning
+            expected_price_time = self._get_expected_price_arrival_time()
+
             plan = generate_charging_plan(
                 data, self.config_settings, self.manual_override_active, 
                 learning_state=self.learning_state, 
-                overload_prevention_minutes=self.session_manager.overload_prevention_minutes
+                overload_prevention_minutes=self.session_manager.overload_prevention_minutes,
+                expected_price_time=expected_price_time
             )
 
             # Handle Buffer Logic (stateful, so stays in coordinator)
@@ -1268,6 +1280,8 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 "today": data.get("price_data", {}).get("today", []),
                 "tomorrow": data.get("price_data", {}).get("tomorrow", []),
                 "tomorrow_valid": data.get("price_data", {}).get("tomorrow_valid", False),
+                "expected_arrival_time": self._get_expected_price_arrival_time(),
+                "arrival_history": self.learning_state.get(LEARNING_PRICE_ARRIVAL, []),
             },
             
             # Calendar events if any
@@ -1339,6 +1353,67 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.info("=" * 80)
         
         return debug_dump
+
+    def _track_price_arrival(self, price_data: dict):
+        """Track when tomorrow's prices become available to learn the pattern."""
+        tomorrow_valid = price_data.get("tomorrow_valid", False) or bool(price_data.get("tomorrow"))
+        
+        # Detect transition from no tomorrow prices to having tomorrow prices
+        if tomorrow_valid and not self._last_tomorrow_valid:
+            now = datetime.now()
+            arrival_time = now.strftime("%H:%M")
+            
+            # Add to history (keep last 14 days)
+            price_arrivals = self.learning_state.get(LEARNING_PRICE_ARRIVAL, [])
+            price_arrivals.append({
+                "date": now.date().isoformat(),
+                "time": arrival_time,
+                "timestamp": now.isoformat(),
+            })
+            
+            # Keep only last 14 entries
+            price_arrivals = price_arrivals[-14:]
+            self.learning_state[LEARNING_PRICE_ARRIVAL] = price_arrivals
+            
+            _LOGGER.info(f"📅 Tomorrow's prices detected at {arrival_time}. Learning pattern ({len(price_arrivals)} samples).")
+            
+            # Save learning state
+            self._save_learning_state()
+        
+        self._last_tomorrow_valid = tomorrow_valid
+    
+    def _get_expected_price_arrival_time(self) -> str | None:
+        """Calculate expected time when tomorrow's prices typically arrive."""
+        price_arrivals = self.learning_state.get(LEARNING_PRICE_ARRIVAL, [])
+        
+        if len(price_arrivals) < 3:
+            return None  # Need at least 3 samples to be confident
+        
+        # Parse times and calculate average
+        from datetime import datetime as dt
+        times_in_minutes = []
+        
+        for entry in price_arrivals:
+            try:
+                time_str = entry.get("time", "")
+                parts = time_str.split(":")
+                if len(parts) == 2:
+                    hours = int(parts[0])
+                    minutes = int(parts[1])
+                    total_minutes = hours * 60 + minutes
+                    times_in_minutes.append(total_minutes)
+            except (ValueError, AttributeError):
+                continue
+        
+        if not times_in_minutes:
+            return None
+        
+        # Calculate average time
+        avg_minutes = sum(times_in_minutes) // len(times_in_minutes)
+        avg_hours = avg_minutes // 60
+        avg_mins = avg_minutes % 60
+        
+        return f"{avg_hours:02d}:{avg_mins:02d}"
 
     def _get_learning_explanation(self) -> str:
         """Generate a human-readable explanation of the learning state."""

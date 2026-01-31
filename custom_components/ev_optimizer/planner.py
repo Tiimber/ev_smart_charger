@@ -173,7 +173,7 @@ def get_departure_time(
 
 
 def generate_charging_plan(
-    data: dict, config_settings: dict, manual_override: bool, learning_state: dict = None, now: datetime | None = None, overload_prevention_minutes: float = 0.0
+    data: dict, config_settings: dict, manual_override: bool, learning_state: dict = None, now: datetime | None = None, overload_prevention_minutes: float = 0.0, expected_price_time: str | None = None
 ) -> dict:
     """Core Logic.
     
@@ -184,6 +184,7 @@ def generate_charging_plan(
         learning_state: Dictionary with learning state (efficiency learning)
         now: Current datetime (for testing)
         overload_prevention_minutes: Minutes of accumulated charging time lost due to overload prevention
+        expected_price_time: Expected time when tomorrow's prices typically arrive (HH:MM format)
     """
     now = now or datetime.now()
     learning_state = learning_state or {}  # Default to empty dict if not provided
@@ -408,11 +409,25 @@ def generate_charging_plan(
             if now < latest_start_dt:
                 plan["should_charge_now"] = False
                 horizon_str = last_price_end.strftime("%H:%M") if last_price_end else "unknown"
-                plan["charging_summary"] = (
-                    f"Waiting for additional price data before planning. "
-                    f"Known prices until {horizon_str}; departure at {dept_dt.strftime('%H:%M')} {time_source}. "
-                    f"Latest start to reach target is ~{latest_start_dt.strftime('%H:%M')}."
-                )
+                
+                # Build informative waiting message
+                current_soc = data.get("car_soc", 0)
+                plugged = data.get("car_plugged", False)
+                plugged_str = "plugged in" if plugged else "NOT PLUGGED IN"
+                
+                summary_parts = [
+                    f"Waiting for additional price data before planning.",
+                    f"Car: {int(current_soc)}% SoC, {plugged_str}.",
+                    f"Known prices until {horizon_str}; departure at {dept_dt.strftime('%H:%M')} {time_source}.",
+                ]
+                
+                # Add expected price arrival time if learned
+                if expected_price_time:
+                    summary_parts.append(f"Tomorrow's prices typically arrive around {expected_price_time}.")
+                
+                summary_parts.append(f"Latest start to reach target is ~{latest_start_dt.strftime('%H:%M')}.")
+                
+                plan["charging_summary"] = " ".join(summary_parts)
                 _LOGGER.debug("⏸️  WAITING for more price data (still have time until %s)", latest_start_dt.strftime("%H:%M"))
                 # Keep schedule visible (all inactive) but don't select slots yet.
                 selected_slots = []

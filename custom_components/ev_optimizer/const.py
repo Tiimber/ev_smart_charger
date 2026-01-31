@@ -89,3 +89,4 @@ LEARNING_SESSIONS = "loss_learning_sessions"
 LEARNING_LOCKED = "loss_locked"
 LEARNING_HISTORY = "learning_history"
 LEARNING_LAST_REFRESH = "last_refresh_time"
+LEARNING_PRICE_ARRIVAL = "price_arrival_times"  # Track when tomorrow's prices arrive
