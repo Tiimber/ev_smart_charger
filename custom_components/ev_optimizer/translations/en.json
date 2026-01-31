@@ -100,9 +100,9 @@
           "target_soc": "Default charging target when you plug in (typically 80%).",
           "min_guaranteed_soc": "Minimum SoC to maintain regardless of price (safety buffer).",
           "price_limit_1": "Nordpool price threshold for 'very cheap' electricity (before taxes). When spot price is below this, charge opportunistically.",
-          "target_soc_1": "Target SoC when prices are very cheap (typically 100% to take advantage).",
+          "target_soc_1": "Target SoC when prices are very cheap (typically 90-100% to take advantage).",
           "price_limit_2": "Nordpool price threshold for 'acceptable' electricity (before taxes). Charge to this target when prices are moderate.",
-          "target_soc_2": "Target SoC when prices are acceptable (typically 80-90%)."
+          "target_soc_2": "Target SoC when prices are acceptable (typically 70-80%)."
         }
       }
     }
@@ -215,9 +215,9 @@
           "target_soc": "Default charging target when you plug in (typically 80%).",
           "min_guaranteed_soc": "Minimum SoC to maintain regardless of price (safety buffer).",
           "price_limit_1": "Nordpool price threshold for 'very cheap' electricity (before taxes). When spot price is below this, charge opportunistically.",
-          "target_soc_1": "Target SoC when prices are very cheap (typically 100% to take advantage).",
+          "target_soc_1": "Target SoC when prices are very cheap (typically 90-100% to take advantage).",
           "price_limit_2": "Nordpool price threshold for 'acceptable' electricity (before taxes). Charge to this target when prices are moderate.",
-          "target_soc_2": "Target SoC when prices are acceptable (typically 80-90%)."
+          "target_soc_2": "Target SoC when prices are acceptable (typically 70-80%)."
         }
       }
     }

@@ -1279,6 +1279,21 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
                 "session_active": self.session_manager.current_session is not None,
             },
             
+            # Efficiency learning state
+            "efficiency_learning": {
+                "enabled": self.entry.options.get(CONF_CAR_REFRESH_INTERVAL, self.entry.data.get(CONF_CAR_REFRESH_INTERVAL)) in [
+                    REFRESH_AT_TARGET, REFRESH_1_HOUR, REFRESH_2_HOURS, REFRESH_3_HOURS, REFRESH_4_HOURS
+                ],
+                "learned_loss_pct": self.learning_state.get(LEARNING_CHARGER_LOSS, 0.0),
+                "confidence": self.learning_state.get(LEARNING_CONFIDENCE, 0),
+                "sessions_completed": self.learning_state.get(LEARNING_SESSIONS, 0),
+                "locked": self.learning_state.get(LEARNING_LOCKED, False),
+                "configured_loss_pct": float(self.entry.options.get(CONF_CHARGER_LOSS, self.entry.data.get(CONF_CHARGER_LOSS, DEFAULT_LOSS))),
+                "last_refresh": self.learning_state.get(LEARNING_LAST_REFRESH),
+                "measurement_history": self.learning_state.get(LEARNING_HISTORY, []),
+                "explanation": self._get_learning_explanation(),
+            },
+            
             # Latest plan output (for comparison)
             "last_plan": {
                 "should_charge_now": data.get("should_charge_now", False),
@@ -1324,3 +1339,69 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.info("=" * 80)
         
         return debug_dump
+
+    def _get_learning_explanation(self) -> str:
+        """Generate a human-readable explanation of the learning state."""
+        # Helper to get config from Options (new) or Data (initial)
+        def get_conf(key, default=None):
+            return self.entry.options.get(key, self.entry.data.get(key, default))
+        
+        refresh_mode = get_conf(CONF_CAR_REFRESH_INTERVAL)
+        
+        # Check if learning is enabled
+        if refresh_mode not in [REFRESH_AT_TARGET, REFRESH_1_HOUR, REFRESH_2_HOURS, REFRESH_3_HOURS, REFRESH_4_HOURS]:
+            return "Adaptive efficiency learning is DISABLED. Car refresh mode is set to 'Never' or not configured. The system uses the fixed configured loss percentage."
+        
+        # Learning is enabled
+        configured_loss = float(get_conf(CONF_CHARGER_LOSS, DEFAULT_LOSS))
+        learned_loss = self.learning_state.get(LEARNING_CHARGER_LOSS, configured_loss)
+        confidence = self.learning_state.get(LEARNING_CONFIDENCE, 0)
+        sessions = self.learning_state.get(LEARNING_SESSIONS, 0)
+        locked = self.learning_state.get(LEARNING_LOCKED, False)
+        history = self.learning_state.get(LEARNING_HISTORY, [])
+        
+        lines = ["Adaptive efficiency learning is ENABLED."]
+        lines.append(f"Refresh mode: {refresh_mode}")
+        lines.append("")
+        
+        # Status
+        if locked:
+            lines.append("Status: LOCKED ✓")
+            lines.append(f"The system has converged on {learned_loss:.1f}% efficiency loss with high confidence (8+/10).")
+            lines.append(f"Completed {sessions} learning sessions. No longer applying safety buffer or frequent refreshes.")
+        elif sessions >= 10:
+            lines.append("Status: LEARNING COMPLETE (unlocked)")
+            lines.append(f"Completed {sessions} learning sessions but confidence is {confidence}/10 (below lock threshold of 8).")
+            lines.append(f"Current efficiency loss: {learned_loss:.1f}% (configured baseline: {configured_loss:.1f}%)")
+        elif sessions > 0:
+            lines.append(f"Status: ACTIVELY LEARNING ({sessions}/10 sessions)")
+            lines.append(f"Current efficiency loss: {learned_loss:.1f}% (started from: {configured_loss:.1f}%)")
+            lines.append(f"Confidence: {confidence}/10 (needs 8+ to lock)")
+            lines.append("The system adds a 30-minute safety buffer to charging plans during learning.")
+        else:
+            lines.append("Status: NOT STARTED")
+            lines.append(f"Using configured loss: {configured_loss:.1f}%")
+            lines.append("Learning will begin on the first charging session with Smart Refresh enabled.")
+        
+        lines.append("")
+        
+        # Learning progress
+        if sessions > 0:
+            lines.append("Learning Progress:")
+            lines.append(f"  • Sessions completed: {sessions}")
+            lines.append(f"  • Confidence level: {confidence}/10")
+            lines.append(f"  • Measurements taken: {len(history)}")
+            
+            if history:
+                lines.append(f"  • Last measurement: {history[-1].get('timestamp', 'unknown')}")
+                last_error = history[-1].get('error', 0)
+                lines.append(f"  • Last SoC error: {last_error:+.2f}% ({'overperforming' if last_error > 0 else 'underperforming'})")
+            
+            lines.append("")
+            lines.append("How it works:")
+            lines.append("  • The system measures actual vs expected SoC during charging")
+            lines.append("  • Adjusts loss percentage up (if underperforming) or down (if overperforming)")
+            lines.append("  • Confidence increases when measurements are within tolerance")
+            lines.append("  • Locks at confidence 8/10 for stable long-term use")
+        
+        return "\n".join(lines)
