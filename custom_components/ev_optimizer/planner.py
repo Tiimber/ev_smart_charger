@@ -18,9 +18,44 @@ from .const import (
     ENTITY_TARGET_OVERRIDE,
     ENTITY_PRICE_EXTRA_FEE,
     ENTITY_PRICE_VAT,
+    LEARNING_CHARGER_LOSS,
+    LEARNING_CONFIDENCE,
+    LEARNING_SESSIONS,
+    LEARNING_LOCKED,
+    DEFAULT_LOSS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def get_effective_charger_loss(config_settings: dict, learning_state: dict) -> tuple[float, bool]:
+    """Get the charger loss percentage to use in calculations.
+    
+    Returns:
+        Tuple of (effective_loss_percentage, is_learning_phase)
+    """
+    configured_loss = config_settings.get("charger_loss", DEFAULT_LOSS)
+    sessions = learning_state.get(LEARNING_SESSIONS, 0)
+    
+    if sessions > 0:
+        # Use learned value if we have learning data
+        effective_loss = learning_state.get(LEARNING_CHARGER_LOSS, configured_loss)
+    else:
+        # Use configured on first run
+        effective_loss = configured_loss
+    
+    # Check if in learning phase
+    locked = learning_state.get(LEARNING_LOCKED, False)
+    is_learning = (sessions < 10 and not locked)
+    
+    confidence = learning_state.get(LEARNING_CONFIDENCE, 0)
+    _LOGGER.debug(
+        "🔧 Charger efficiency: %.1f%% loss (sessions=%d, confidence=%d/10, %s)",
+        effective_loss, sessions, confidence,
+        "Learning" if is_learning else "Locked"
+    )
+    
+    return effective_loss, is_learning
 
 
 def calculate_load_balancing(data: dict, max_fuse: float) -> float:
@@ -138,7 +173,7 @@ def get_departure_time(
 
 
 def generate_charging_plan(
-    data: dict, config_settings: dict, manual_override: bool, now: datetime | None = None, overload_prevention_minutes: float = 0.0
+    data: dict, config_settings: dict, manual_override: bool, learning_state: dict = None, now: datetime | None = None, overload_prevention_minutes: float = 0.0
 ) -> dict:
     """Core Logic.
     
@@ -146,10 +181,12 @@ def generate_charging_plan(
         data: Sensor data and settings
         config_settings: Configuration parameters
         manual_override: Whether manual override is active
+        learning_state: Dictionary with learning state (efficiency learning)
         now: Current datetime (for testing)
         overload_prevention_minutes: Minutes of accumulated charging time lost due to overload prevention
     """
     now = now or datetime.now()
+    learning_state = learning_state or {}  # Default to empty dict if not provided
     _LOGGER.debug(
         "🔍 ===== CHARGING PLAN GENERATION START ===== Time: %s",
         now.strftime("%Y-%m-%d %H:%M:%S")
@@ -340,9 +377,12 @@ def generate_charging_plan(
             plan["should_charge_now"] = False
         _LOGGER.debug("⚡ DECISION: Maintenance mode → should_charge=%s", plan["should_charge_now"])
     else:
+        # Get effective charger loss (learned or configured)
+        effective_loss, is_learning = get_effective_charger_loss(config_settings, learning_state)
+        
         soc_needed = final_target - current_soc
         kwh_needed = (soc_needed / 100.0) * config_settings["car_capacity"]
-        efficiency = 1.0 - (config_settings["charger_loss"] / 100.0)
+        efficiency = 1.0 - (effective_loss / 100.0)
         kwh_to_pull = kwh_needed / efficiency
 
         # Estimate power from max fuse (converted to kW)
@@ -350,7 +390,7 @@ def generate_charging_plan(
         est_power_kw = min((3 * 230 * config_settings["max_fuse"]) / 1000.0, 11.0)
         hours_needed = kwh_to_pull / est_power_kw
         
-        _LOGGER.debug("⚡ Energy calculation: kwh_needed=%.2f, efficiency=%.2f, kwh_to_pull=%.2f",
+        _LOGGER.debug("⚡ Energy calculation: kwh_needed=%.2f, efficiency=%.2f (%.1f%% loss), kwh_to_pull=%.2f",
                       kwh_needed, efficiency, kwh_to_pull)
         _LOGGER.debug("⏱️  Timing: est_power=%.2f kW, hours_needed=%.2f, overload_prevention_min=%.1f",
                       est_power_kw, hours_needed, overload_prevention_minutes)
@@ -418,7 +458,14 @@ def generate_charging_plan(
         
         # Add extra slots to compensate for overload prevention minutes
         slots_needed += extra_slots_needed
-
+        
+        # Add safety buffer during learning phase (30 minutes)
+        if is_learning:
+            slot_duration_min = 15 if len(raw_today) > 25 else 60
+            buffer_slots = 2 if slot_duration_min == 15 else 1  # 30 minutes
+            slots_needed += buffer_slots
+            _LOGGER.debug("⏰ Learning phase: adding %d slots (30min safety buffer)", buffer_slots)
+        
         sorted_window = sorted(calc_window, key=lambda x: x["price"])
         selected_slots = sorted_window[:slots_needed]
         selected_start_times = {s["start"] for s in selected_slots}

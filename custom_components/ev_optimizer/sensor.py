@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, LEARNING_CHARGER_LOSS, LEARNING_CONFIDENCE, LEARNING_SESSIONS, LEARNING_LOCKED, LEARNING_HISTORY
 from .coordinator import EVSmartChargerCoordinator
 
 async def async_setup_entry(
@@ -25,6 +25,8 @@ async def async_setup_entry(
         EVChargingPlanSensor(coordinator),
         EVSmartChargerLastSessionSensor(coordinator), # New Sensor
         EVDebugDumpPathSensor(coordinator), # Debug dump file path
+        LearnedEfficiencySensor(coordinator), # Learning efficiency
+        EfficiencyConfidenceSensor(coordinator), # Learning confidence
     ])
 
 class EVSmartChargerBaseSensor(CoordinatorEntity, SensorEntity):
@@ -185,3 +187,88 @@ class EVDebugDumpPathSensor(EVSmartChargerBaseSensor):
         
         return attrs
 
+
+class LearnedEfficiencySensor(CoordinatorEntity, SensorEntity):
+    """Shows current learned charger efficiency."""
+    
+    _attr_has_entity_name = False
+    _attr_name = "Learned Charger Efficiency"
+    _attr_unique_id = "ev_optimizer_learned_efficiency"
+    _attr_native_unit_of_measurement = "%"
+    _attr_icon = "mdi:school"
+    _attr_state_class = "measurement"
+    
+    def __init__(self, coordinator):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+    
+    @property
+    def native_value(self) -> float:
+        return round(
+            self.coordinator.learning_state.get(LEARNING_CHARGER_LOSS, 0.0), 1
+        )
+    
+    @property
+    def extra_state_attributes(self) -> dict:
+        learning = self.coordinator.learning_state
+        confidence = learning.get(LEARNING_CONFIDENCE, 0)
+        locked = learning.get(LEARNING_LOCKED, False)
+        sessions = learning.get(LEARNING_SESSIONS, 0)
+        
+        if locked:
+            status_text = "Locked - Using learned value"
+        elif sessions == 0:
+            status_text = "Not started - Awaiting first session"
+        elif sessions < 10:
+            status_text = f"Learning - {sessions}/10 sessions complete"
+        else:
+            status_text = "Converged"
+        
+        return {
+            "confidence": f"{confidence}/10",
+            "confidence_level": confidence,
+            "locked": locked,
+            "sessions_completed": sessions,
+            "status": status_text,
+            "last_3_measurements": learning.get(LEARNING_HISTORY, [])[-3:],
+        }
+
+
+class EfficiencyConfidenceSensor(CoordinatorEntity, SensorEntity):
+    """Shows confidence level in learned efficiency."""
+    
+    _attr_has_entity_name = False
+    _attr_name = "Efficiency Learning Confidence"
+    _attr_unique_id = "ev_optimizer_efficiency_confidence"
+    _attr_icon = "mdi:target"
+    
+    def __init__(self, coordinator):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+    
+    @property
+    def native_value(self) -> str:
+        confidence = self.coordinator.learning_state.get(LEARNING_CONFIDENCE, 0)
+        return f"{confidence}/10"
+    
+    @property
+    def extra_state_attributes(self) -> dict:
+        learning = self.coordinator.learning_state
+        locked = learning.get(LEARNING_LOCKED, False)
+        sessions = learning.get(LEARNING_SESSIONS, 0)
+        
+        if locked:
+            status_text = "Locked - Using learned value"
+        elif sessions == 0:
+            status_text = "Not started - Awaiting first session"
+        elif sessions < 10:
+            status_text = f"Learning - {sessions}/10 sessions complete"
+        else:
+            status_text = "Converged"
+        
+        return {
+            "status": status_text,
+            "locked": locked,
+            "sessions": sessions,
+            "efficiency_loss_pct": round(learning.get(LEARNING_CHARGER_LOSS, 0.0), 1),
+        }

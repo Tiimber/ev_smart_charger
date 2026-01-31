@@ -123,6 +123,64 @@ After your car reaches the target SoC, the system can keep the charger active at
 
 You can disable maintenance mode entirely by setting your target SoC lower, or let it run passively while you're at home.
 
+## Adaptive Efficiency Learning (NEW in v1.1.0)
+
+The system can automatically learn your charger's actual efficiency loss over time, providing more accurate charging plans and cost estimates:
+
+### How It Works
+
+* **Automatic Learning:** When enabled (`car_refresh_interval` set to "Target + 30min" or similar), the system measures actual SoC gains during charging sessions
+* **Multi-Point Sampling:** During the first 10 sessions, the system refreshes your car's SoC at multiple intervals (60 minutes, 30 minutes, and completion) to gather accurate data
+* **Smart Adjustment:** The system compares expected SoC (based on energy delivered) with actual SoC from your car, then adjusts the efficiency loss percentage:
+  * **Aggressive early adjustments** (0.5-3%) during first 5 sessions to converge quickly
+  * **Conservative fine-tuning** (0.25-1.5%) after 5 sessions for stability
+* **Confidence-Based Locking:** After 8+ measurements within tolerance (starting at ±3%, tightening to ±1%), the learned value locks and the system switches to single-refresh mode for efficiency
+* **Safety Buffer:** During learning (first 10 sessions), a 30-minute buffer is automatically added to charging plans to prevent undershooting your target
+
+### Configuration
+
+To enable adaptive learning:
+1. Go to **Settings > Devices & Services > EV Optimizer > Configure**
+2. Navigate to the **Planning Configuration** step
+3. Set **Car Refresh Interval** to one of:
+   * "Target + 30min" (recommended)
+   * "At Target SoC + 1 hour"
+   * "At Target SoC + 2 hours"
+4. The system will automatically start learning on your next charging session
+
+### Monitoring Learning Progress
+
+Two new sensors help you track the learning process:
+
+* **Learned Charger Efficiency** (`sensor.learned_charger_efficiency`): Shows current learned loss percentage (0-20%)
+  * **Attributes:**
+    * `confidence`: Current confidence level (0-10)
+    * `locked`: Whether learning is complete and locked
+    * `sessions_completed`: Number of learning sessions completed
+    * `status`: Human-readable status text
+    * `last_3_measurements`: Recent measurement history
+* **Efficiency Learning Confidence** (`sensor.efficiency_learning_confidence`): Shows confidence as "x/10" rating
+
+### Reset Learning
+
+If you change chargers or want to restart the learning process:
+1. Use the **Reset Efficiency Learning** button from your dashboard
+2. Or call the service `button.reset_efficiency_learning`
+3. Learning will restart from your configured charger loss percentage
+
+### Benefits
+
+* **Accurate Cost Estimates:** Real-world efficiency data ensures your charging session cost predictions match reality
+* **Optimal Planning:** The system allocates exactly the right amount of charging time—no more, no less
+* **Hands-Off Operation:** After initial learning, the system maintains accuracy automatically across thousands of charging sessions
+
+### Technical Details
+
+* **Learning Range:** Efficiency loss can be learned between 0% and 20%
+* **Convergence Time:** Most systems lock in after 7-10 charging sessions (typically 1-2 weeks of daily charging)
+* **Persistence:** Learned values are saved across Home Assistant restarts
+* **Bounds Protection:** The system never adjusts beyond safe operational limits
+
 ## Load Balancing Details
 
 The system protects your home's electrical system by calculating the maximum safe current available for charging at any moment:
@@ -159,12 +217,15 @@ This integration creates several entities to help you control and visualize the 
 * **VAT Percentage** (`number`): Set your local VAT (e.g., 25) to be added to the spot price.  (If not already included in your Electricity Price sensor).
 * **Clear Manual Override** (`button`): Reverts any manual slider/time changes and returns to "Smart Mode" (calculating targets based on price/calendar).
 * **Refresh Charging Plan** (`button`): Forces a recalculation of the schedule immediately.
+* **Reset Efficiency Learning** (`button`): Resets the adaptive learning system to restart from your configured charger loss percentage.
 
 ### Sensors (Visualization)
 * **Charging Schedule** (`sensor`): Contains the complex data for the graph (prices, charging windows) and a text summary attribute `charging_summary`.
 * **Max Safe Current** (`sensor`): The dynamic amperage limit calculated to protect your main fuse.
 * **Charger Logic Status** (`sensor`): Shows current state (Disconnected, Waiting, Charging).
 * **Price Logic** (`sensor`): Indicates if current electricity price is considered Cheap/Expensive relative to the day's average.
+* **Learned Charger Efficiency** (`sensor`): Shows the automatically learned efficiency loss percentage with confidence level and learning status.
+* **Efficiency Learning Confidence** (`sensor`): Displays learning confidence as "x/10" rating.
 
 ### Charging Report and Charging Plan
 

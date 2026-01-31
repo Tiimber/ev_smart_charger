@@ -68,19 +68,41 @@
         }
       },
       "price_calendar": {
-        "title": "4. Price & Planning",
-        "description": "Configure Electricity Prices, Calendar integration, and general settings.",
+        "title": "4. Price & Calendar",
+        "description": "Configure Electricity Prices and Calendar integration.",
         "data": {
           "price_sensor": "Nordpool Price Sensor",
           "calendar_entity": "Planning Calendar",
-          "charger_loss": "Charger Efficiency Loss",
+          "charger_loss": "Initial Efficiency Loss (Optional)",
           "currency": "Currency"
         },
         "data_description": {
           "price_sensor": "Optional: Nordpool sensor for spot prices. If empty, runs in simple Load Balancing mode.",
           "calendar_entity": "Optional: Local Calendar to read for departure times and target SoC (e.g. 'Trip 90%').",
-          "charger_loss": "Estimated energy loss during charging (usually 5-10%).",
+          "charger_loss": "Optional: Starting estimate for energy loss (0-20%). Will auto-adjust if Smart Refresh is enabled. Leave at 0% to learn from scratch.",
           "currency": "Currency symbol to display in cost summaries."
+        }
+      },
+      "planning": {
+        "title": "5. Planning & Defaults",
+        "description": "Set your standard charging schedule and price thresholds.",
+        "data": {
+          "departure_time": "Standard Departure Time",
+          "target_soc": "Standard Target SoC",
+          "min_guaranteed_soc": "Minimum Guaranteed SoC",
+          "price_limit_1": "Price Limit: Cheap (Low)",
+          "target_soc_1": "Target SoC at Cheap Prices",
+          "price_limit_2": "Price Limit: Acceptable (High)",
+          "target_soc_2": "Target SoC at Acceptable Prices"
+        },
+        "data_description": {
+          "departure_time": "Your typical daily departure time (e.g., 07:00 for morning commute).",
+          "target_soc": "Default charging target when you plug in (typically 80%).",
+          "min_guaranteed_soc": "Minimum SoC to maintain regardless of price (safety buffer).",
+          "price_limit_1": "Nordpool price threshold for 'very cheap' electricity (before taxes). When spot price is below this, charge opportunistically.",
+          "target_soc_1": "Target SoC when prices are very cheap (typically 100% to take advantage).",
+          "price_limit_2": "Nordpool price threshold for 'acceptable' electricity (before taxes). Charge to this target when prices are moderate.",
+          "target_soc_2": "Target SoC when prices are acceptable (typically 80-90%)."
         }
       }
     }
@@ -88,13 +110,14 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configure EV Smart Charger",
+        "title": "Configure EV Optimizer",
         "description": "Select which settings you want to modify:",
         "menu_options": {
           "charger": "Charger Settings",
           "car": "Car Settings",
           "meter": "Meter & Fuse Settings",
-          "price_calendar": "Price & Planning"
+          "price_calendar": "Price & Calendar",
+          "planning": "Planning & Defaults"
         }
       },
       "charger": {
@@ -160,19 +183,41 @@
         }
       },
       "price_calendar": {
-        "title": "Price & Planning",
-        "description": "Update Price, Calendar, and General settings.",
+        "title": "Price & Calendar",
+        "description": "Update Price and Calendar settings.",
         "data": {
           "price_sensor": "Nordpool Price Sensor",
           "calendar_entity": "Planning Calendar",
-          "charger_loss": "Charger Efficiency Loss",
+          "charger_loss": "Initial Efficiency Loss (Optional)",
           "currency": "Currency"
         },
         "data_description": {
           "price_sensor": "Optional: Nordpool sensor for spot prices. If empty, runs in simple Load Balancing mode.",
           "calendar_entity": "Optional: Local Calendar to read for departure times and target SoC (e.g. 'Trip 90%').",
-          "charger_loss": "Estimated energy loss during charging (usually 5-10%).",
+          "charger_loss": "Optional: Starting estimate for energy loss (0-20%). Will auto-adjust if Smart Refresh is enabled. Leave at 0% to learn from scratch.",
           "currency": "Currency symbol to display in cost summaries."
+        }
+      },
+      "planning": {
+        "title": "Planning & Defaults",
+        "description": "Update your standard charging schedule and price thresholds.",
+        "data": {
+          "departure_time": "Standard Departure Time",
+          "target_soc": "Standard Target SoC",
+          "min_guaranteed_soc": "Minimum Guaranteed SoC",
+          "price_limit_1": "Price Limit: Cheap (Low)",
+          "target_soc_1": "Target SoC at Cheap Prices",
+          "price_limit_2": "Price Limit: Acceptable (High)",
+          "target_soc_2": "Target SoC at Acceptable Prices"
+        },
+        "data_description": {
+          "departure_time": "Your typical daily departure time (e.g., 07:00 for morning commute).",
+          "target_soc": "Default charging target when you plug in (typically 80%).",
+          "min_guaranteed_soc": "Minimum SoC to maintain regardless of price (safety buffer).",
+          "price_limit_1": "Nordpool price threshold for 'very cheap' electricity (before taxes). When spot price is below this, charge opportunistically.",
+          "target_soc_1": "Target SoC when prices are very cheap (typically 100% to take advantage).",
+          "price_limit_2": "Nordpool price threshold for 'acceptable' electricity (before taxes). Charge to this target when prices are moderate.",
+          "target_soc_2": "Target SoC when prices are acceptable (typically 80-90%)."
         }
       }
     }

@@ -58,6 +58,22 @@ from .const import (
     REFRESH_4_HOURS,
     REFRESH_AT_TARGET,
     DEFAULT_CAPACITY,
+    DEFAULT_LOSS,
+    DEFAULT_CURRENCY,
+    DEFAULT_DEPARTURE_TIME,
+    DEFAULT_TARGET_SOC,
+    DEFAULT_PRICE_LIMIT_1,
+    DEFAULT_TARGET_SOC_1,
+    DEFAULT_PRICE_LIMIT_2,
+    DEFAULT_TARGET_SOC_2,
+    DEFAULT_MIN_SOC,
+    ENTITY_TARGET_SOC,
+    ENTITY_DEPARTURE_TIME,
+    ENTITY_PRICE_LIMIT_1,
+    ENTITY_TARGET_SOC_1,
+    ENTITY_PRICE_LIMIT_2,
+    ENTITY_TARGET_SOC_2,
+    ENTITY_MIN_SOC,
     DEFAULT_MAX_FUSE,
     DEFAULT_LOSS,
     DEFAULT_CURRENCY,
@@ -128,10 +144,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the Price & Calendar configuration step."""
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(title="EV Charger Manager", data=self._data)
+            return await self.async_step_planning()
 
         return self.async_show_form(
             step_id="price_calendar", data_schema=self._get_price_calendar_schema()
+        )
+
+    async def async_step_planning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the Planning & Defaults configuration step."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return self.async_create_entry(title="EV Optimizer", data=self._data)
+
+        return self.async_show_form(
+            step_id="planning", data_schema=self._get_planning_schema()
         )
 
     # --- Schema Helpers ---
@@ -314,6 +342,89 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    @staticmethod
+    def _get_planning_schema(defaults=None):
+        if defaults is None:
+            defaults = {}
+        return vol.Schema(
+            {
+                vol.Required(
+                    ENTITY_DEPARTURE_TIME,
+                    default=defaults.get(ENTITY_DEPARTURE_TIME, DEFAULT_DEPARTURE_TIME),
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.TIME)),
+                vol.Required(
+                    ENTITY_TARGET_SOC,
+                    default=defaults.get(ENTITY_TARGET_SOC, DEFAULT_TARGET_SOC),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=50,
+                        max=100,
+                        step=10,
+                        unit_of_measurement="%",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Required(
+                    ENTITY_MIN_SOC,
+                    default=defaults.get(ENTITY_MIN_SOC, DEFAULT_MIN_SOC),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=10,
+                        max=50,
+                        step=5,
+                        unit_of_measurement="%",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Required(
+                    ENTITY_PRICE_LIMIT_1,
+                    default=defaults.get(ENTITY_PRICE_LIMIT_1, DEFAULT_PRICE_LIMIT_1),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.0,
+                        max=5.0,
+                        step=0.01,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    ENTITY_TARGET_SOC_1,
+                    default=defaults.get(ENTITY_TARGET_SOC_1, DEFAULT_TARGET_SOC_1),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=50,
+                        max=100,
+                        step=10,
+                        unit_of_measurement="%",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Required(
+                    ENTITY_PRICE_LIMIT_2,
+                    default=defaults.get(ENTITY_PRICE_LIMIT_2, DEFAULT_PRICE_LIMIT_2),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0.0,
+                        max=10.0,
+                        step=0.01,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    ENTITY_TARGET_SOC_2,
+                    default=defaults.get(ENTITY_TARGET_SOC_2, DEFAULT_TARGET_SOC_2),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=50,
+                        max=100,
+                        step=10,
+                        unit_of_measurement="%",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+            }
+        )
+
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options via a Menu."""
@@ -332,7 +443,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "charger": "Charger Settings",
                 "car": "Car Settings",
                 "meter": "Meter & Fuse Settings",
-                "price_calendar": "Price & Planning",
+                "price_calendar": "Price & Calendar",
+                "planning": "Planning & Defaults",
             },
         )
 
@@ -376,4 +488,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="price_calendar",
             data_schema=ConfigFlow._get_price_calendar_schema(current_config),
+        )
+
+    async def async_step_planning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        current_config = {**self._config_entry.data, **self._config_entry.options}
+        return self.async_show_form(
+            step_id="planning",
+            data_schema=ConfigFlow._get_planning_schema(current_config),
         )

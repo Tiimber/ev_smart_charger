@@ -14,6 +14,17 @@ def _make_ha_stubs():
     const.STATE_UNKNOWN = "unknown"
     const.SERVICE_TURN_ON = "turn_on"
     const.SERVICE_TURN_OFF = "turn_off"
+    
+    # Add Platform enum stub
+    class Platform:
+        SENSOR = "sensor"
+        SWITCH = "switch"
+        BUTTON = "button"
+        NUMBER = "number"
+        TIME = "time"
+        CAMERA = "camera"
+    
+    const.Platform = Platform
 
     # homeassistant.helpers.update_coordinator
     uh = ModuleType("homeassistant.helpers.update_coordinator")

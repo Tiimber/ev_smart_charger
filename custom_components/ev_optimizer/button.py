@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ENTITY_BUTTON_CLEAR_OVERRIDE
+from .const import DOMAIN, ENTITY_BUTTON_CLEAR_OVERRIDE, LEARNING_CHARGER_LOSS, LEARNING_CONFIDENCE, LEARNING_SESSIONS, LEARNING_LOCKED, LEARNING_HISTORY, LEARNING_LAST_REFRESH, DEFAULT_LOSS
 from .coordinator import EVSmartChargerCoordinator
 
 
@@ -24,6 +24,7 @@ async def async_setup_entry(
             EVGenerateReportButton(coordinator),
             EVGeneratePlanButton(coordinator),
             EVDumpDebugStateButton(coordinator),
+            ResetEfficiencyLearningButton(coordinator),
         ]
     )
 
@@ -86,3 +87,32 @@ class EVDumpDebugStateButton(CoordinatorEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
         self.coordinator.dump_debug_state()
+
+
+class ResetEfficiencyLearningButton(CoordinatorEntity, ButtonEntity):
+    """Button to reset efficiency learning."""
+    
+    _attr_has_entity_name = False
+    _attr_name = "Reset Efficiency Learning"
+    _attr_unique_id = "ev_optimizer_reset_efficiency"
+    _attr_icon = "mdi:restore"
+    
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        configured = self.coordinator.config_settings.get("charger_loss", DEFAULT_LOSS)
+        
+        self.coordinator.learning_state.update({
+            LEARNING_CHARGER_LOSS: configured,
+            LEARNING_CONFIDENCE: 0,
+            LEARNING_SESSIONS: 0,
+            LEARNING_LOCKED: False,
+            LEARNING_HISTORY: [],
+            LEARNING_LAST_REFRESH: None,
+        })
+        
+        self.coordinator._save_data()
+        self.coordinator._add_log(
+            f"Efficiency learning reset to {configured}% (from config)"
+        )
+        
+        await self.coordinator.async_refresh()

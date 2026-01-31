@@ -40,8 +40,15 @@ CONF_CHARGER_CURRENT_L3 = "charger_current_l3"
 DEFAULT_NAME = "EV Optimizer"
 DEFAULT_CAPACITY = 64.0
 DEFAULT_MAX_FUSE = 20.0
-DEFAULT_LOSS = 10.0
+DEFAULT_LOSS = 0.0  # Changed to 0% - will be learned
 DEFAULT_CURRENCY = "SEK"
+DEFAULT_DEPARTURE_TIME = "07:00"
+DEFAULT_TARGET_SOC = 80
+DEFAULT_PRICE_LIMIT_1 = 0.5
+DEFAULT_TARGET_SOC_1 = 100
+DEFAULT_PRICE_LIMIT_2 = 1.5
+DEFAULT_TARGET_SOC_2 = 70
+DEFAULT_MIN_SOC = 20
 
 # Refresh Options
 REFRESH_NEVER = "never"
@@ -74,3 +81,11 @@ ENTITY_PRICE_LIMIT_2 = "price_limit_2"
 ENTITY_TARGET_SOC_2 = "target_soc_2"
 
 ENTITY_MIN_SOC = "min_guaranteed_soc"
+
+# Learning State Keys (for persistence)
+LEARNING_CHARGER_LOSS = "learned_charger_loss"
+LEARNING_CONFIDENCE = "loss_confidence_level"
+LEARNING_SESSIONS = "loss_learning_sessions"
+LEARNING_LOCKED = "loss_locked"
+LEARNING_HISTORY = "learning_history"
+LEARNING_LAST_REFRESH = "last_refresh_time"
