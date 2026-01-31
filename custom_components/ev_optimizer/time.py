@@ -32,12 +32,14 @@ class EVDepartureTime(CoordinatorEntity, TimeEntity):
     def __init__(self, coordinator):
         """Initialize the time entity."""
         super().__init__(coordinator)
-        # Load the saved time, or default to 07:00
-        self._attr_native_value = self.coordinator.data.get(ENTITY_DEPARTURE_TIME, time(7, 0))
+
+    @property
+    def native_value(self) -> time:
+        """Return the current value from the coordinator data."""
+        return self.coordinator.data.get(ENTITY_DEPARTURE_TIME, time(7, 0))
 
     async def async_set_value(self, value: time) -> None:
         """Update the time."""
-        self._attr_native_value = value
         self.coordinator.set_user_input(ENTITY_DEPARTURE_TIME, value)
         self.async_write_ha_state()
 
@@ -52,12 +54,15 @@ class EVDepartureOverride(CoordinatorEntity, TimeEntity):
     def __init__(self, coordinator):
         """Initialize the override entity."""
         super().__init__(coordinator)
+
+    @property
+    def native_value(self) -> time:
+        """Return the current value from the coordinator data."""
         # Default to the Standard time if no override is currently active
         std_time = self.coordinator.data.get(ENTITY_DEPARTURE_TIME, time(7, 0))
-        self._attr_native_value = self.coordinator.data.get(ENTITY_DEPARTURE_OVERRIDE, std_time)
+        return self.coordinator.data.get(ENTITY_DEPARTURE_OVERRIDE, std_time)
 
     async def async_set_value(self, value: time) -> None:
         """Update the override time."""
-        self._attr_native_value = value
         self.coordinator.set_user_input(ENTITY_DEPARTURE_OVERRIDE, value)
         self.async_write_ha_state()
