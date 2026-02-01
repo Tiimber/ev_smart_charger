@@ -63,6 +63,9 @@ def test_coordinator_clears_buffer_on_plugin(pkg_loader):
                 "async_call": lambda self, *a, **k: None,
             })()
             self.config_entries = type("C", (), {})()
+            self.config = type("CFG", (), {
+                "path": lambda *args: "/tmp/" + "_".join(args)
+            })()
             def async_add_executor_job(f, *a):
                 return f(*a)
             self.async_add_executor_job = async_add_executor_job
