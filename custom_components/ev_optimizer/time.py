@@ -82,7 +82,6 @@ class EVDebugCurrentTime(CoordinatorEntity, TimeEntity):
     _attr_name = "Debug: Current Time"
     _attr_unique_id = "ev_optimizer_debug_current_time"
     _attr_icon = "mdi:clock-start"
-    _attr_entity_category = "diagnostic"
 
     def __init__(self, coordinator):
         """Initialize the debug time entity."""
@@ -105,7 +104,6 @@ class EVDebugDepartureTime(CoordinatorEntity, TimeEntity):
     _attr_name = "Debug: Departure Time"
     _attr_unique_id = "ev_optimizer_debug_departure_time"
     _attr_icon = "mdi:clock-end"
-    _attr_entity_category = "diagnostic"
 
     def __init__(self, coordinator):
         """Initialize the debug time entity."""

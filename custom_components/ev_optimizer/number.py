@@ -93,4 +93,3 @@ class EVDebugSoCNumber(EVNumberBase):
     """Debug SoC field for custom scenarios."""
     _attr_icon = "mdi:battery"
     _attr_native_unit_of_measurement = "%"
-    _attr_entity_category = "diagnostic"

@@ -96,7 +96,6 @@ class EVDumpCustomScenarioButton(CoordinatorEntity, ButtonEntity):
     _attr_name = "Dump Custom Scenario"
     _attr_unique_id = "ev_optimizer_dump_custom"
     _attr_icon = "mdi:bug-play"
-    _attr_entity_category = "diagnostic"
 
     async def async_press(self) -> None:
         """Handle the button press."""
