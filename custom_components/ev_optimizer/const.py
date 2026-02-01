@@ -82,6 +82,12 @@ ENTITY_TARGET_SOC_2 = "target_soc_2"
 
 ENTITY_MIN_SOC = "min_guaranteed_soc"
 
+# Debug Simulation Fields
+ENTITY_DEBUG_CURRENT_TIME = "debug_current_time"
+ENTITY_DEBUG_DEPARTURE_TIME = "debug_departure_time"
+ENTITY_DEBUG_CURRENT_SOC = "debug_current_soc"
+ENTITY_DEBUG_TARGET_SOC = "debug_target_soc"
+
 # Learning State Keys (for persistence)
 LEARNING_CHARGER_LOSS = "learned_charger_loss"
 LEARNING_CONFIDENCE = "loss_confidence_level"

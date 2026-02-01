@@ -24,6 +24,7 @@ async def async_setup_entry(
             EVGenerateReportButton(coordinator),
             EVGeneratePlanButton(coordinator),
             EVDumpDebugStateButton(coordinator),
+            EVDumpCustomScenarioButton(coordinator),
             ResetEfficiencyLearningButton(coordinator),
         ]
     )
@@ -87,6 +88,19 @@ class EVDumpDebugStateButton(CoordinatorEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
         self.coordinator.dump_debug_state()
+
+
+class EVDumpCustomScenarioButton(CoordinatorEntity, ButtonEntity):
+    """Button to dump custom debug scenario using debug fields."""
+
+    _attr_name = "Dump Custom Scenario"
+    _attr_unique_id = "ev_optimizer_dump_custom"
+    _attr_icon = "mdi:bug-play"
+    _attr_entity_category = "diagnostic"
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        self.coordinator.dump_custom_scenario()
 
 
 class ResetEfficiencyLearningButton(CoordinatorEntity, ButtonEntity):

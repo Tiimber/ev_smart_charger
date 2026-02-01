@@ -15,7 +15,9 @@ from .const import (
     ENTITY_TARGET_SOC_2,
     ENTITY_MIN_SOC,
     ENTITY_PRICE_EXTRA_FEE,
-    ENTITY_PRICE_VAT
+    ENTITY_PRICE_VAT,
+    ENTITY_DEBUG_CURRENT_SOC,
+    ENTITY_DEBUG_TARGET_SOC,
 )
 from .coordinator import EVSmartChargerCoordinator
 
@@ -48,6 +50,10 @@ async def async_setup_entry(
         # Cost Settings
         EVPriceLimitNumber(coordinator, ENTITY_PRICE_EXTRA_FEE, "Extra Cost per kWh (Fees)", 0.0, 5.0, 0.0, step=0.01),
         EVChargeTargetNumber(coordinator, ENTITY_PRICE_VAT, "VAT Percentage", 0, 100, 0, step=1),
+        
+        # Debug Fields (diagnostic category)
+        EVDebugSoCNumber(coordinator, ENTITY_DEBUG_CURRENT_SOC, "Debug: Current SoC", 0, 100, 50, step=1),
+        EVDebugSoCNumber(coordinator, ENTITY_DEBUG_TARGET_SOC, "Debug: Target SoC", 0, 100, 80, step=1),
     ])
 
 class EVNumberBase(CoordinatorEntity, NumberEntity):
@@ -82,3 +88,9 @@ class EVPriceLimitNumber(EVNumberBase):
     """Slider for Price limits."""
     _attr_icon = "mdi:currency-usd"
     _attr_mode = NumberMode.BOX
+
+class EVDebugSoCNumber(EVNumberBase):
+    """Debug SoC field for custom scenarios."""
+    _attr_icon = "mdi:battery"
+    _attr_native_unit_of_measurement = "%"
+    _attr_entity_category = "diagnostic"

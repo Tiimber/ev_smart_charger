@@ -75,6 +75,10 @@ from .const import (
     ENTITY_TARGET_OVERRIDE,
     ENTITY_PRICE_EXTRA_FEE,
     ENTITY_PRICE_VAT,
+    ENTITY_DEBUG_CURRENT_TIME,
+    ENTITY_DEBUG_DEPARTURE_TIME,
+    ENTITY_DEBUG_CURRENT_SOC,
+    ENTITY_DEBUG_TARGET_SOC,
 )
 
 # Imports for Real-time Safety safety
@@ -1164,6 +1168,14 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
         if is_plugged and not self.previous_plugged_state:
             self.session_manager.start_session(data.get("car_soc", 0))
             self.manual_override_active = False
+            
+            # CRITICAL FIX: Clear old session state to prevent buffer logic from interfering
+            # When car plugs in, we MUST clear any buffered state from previous session
+            self._last_scheduled_end = None
+            self._last_applied_state = None
+            self._last_applied_amps = -1
+            self._last_applied_car_limit = -1
+            
             # If we missed a session finalization, it's too late now, start fresh.
             try:
                 # Reset inputs to defaults
@@ -1370,6 +1382,148 @@ class EVSmartChargerCoordinator(DataUpdateCoordinator):
             _LOGGER.info("=" * 80)
         
         return debug_dump
+
+    def dump_custom_scenario(self) -> dict:
+        """Dump custom debug scenario using debug input fields.
+        
+        Uses the 4 debug entities (current_time, departure_time, current_soc, target_soc)
+        along with all other current configuration and sensor values.
+        If tomorrow's prices are missing, copies today's prices.
+        """
+        import json
+        from datetime import datetime, timedelta
+        
+        _LOGGER.debug("🔍 Starting custom debug scenario dump...")
+        
+        # Get debug field values
+        debug_current_time = self.user_settings.get(ENTITY_DEBUG_CURRENT_TIME, time(0, 0))
+        debug_departure_time = self.user_settings.get(ENTITY_DEBUG_DEPARTURE_TIME, time(7, 0))
+        debug_current_soc = self.user_settings.get(ENTITY_DEBUG_CURRENT_SOC, 50.0)
+        debug_target_soc = self.user_settings.get(ENTITY_DEBUG_TARGET_SOC, 80.0)
+        
+        # Build timestamp from debug current time (use today's date)
+        now = datetime.now()
+        custom_timestamp = now.replace(
+            hour=debug_current_time.hour,
+            minute=debug_current_time.minute,
+            second=0,
+            microsecond=0
+        )
+        
+        # Get current data snapshot
+        data = self.data if self.data else {}
+        
+        # Handle price data with fallback
+        price_data = data.get("price_data", {})
+        today_prices = price_data.get("today", [])
+        tomorrow_prices = price_data.get("tomorrow", [])
+        tomorrow_valid = price_data.get("tomorrow_valid", False)
+        
+        # If tomorrow prices missing, fake them by copying today's
+        if not tomorrow_prices or not tomorrow_valid:
+            _LOGGER.info("⚠️ Tomorrow prices not available, faking with today's prices")
+            tomorrow_prices = today_prices.copy() if today_prices else []
+            tomorrow_valid = True
+        
+        # Build comprehensive debug dump
+        custom_dump = {
+            "timestamp": custom_timestamp.isoformat(),
+            "description": "Custom debug scenario using debug input fields",
+            "debug_fields_used": {
+                "current_time": str(debug_current_time),
+                "departure_time": str(debug_departure_time),
+                "current_soc": debug_current_soc,
+                "target_soc": debug_target_soc,
+            },
+            
+            # Configuration
+            "config_settings": self.config_settings.copy(),
+            
+            # User settings from UI (use debug target, but keep other settings)
+            "user_settings": {
+                ENTITY_TARGET_SOC: debug_target_soc,  # Use debug target
+                ENTITY_MIN_SOC: self.user_settings.get(ENTITY_MIN_SOC, 20),
+                ENTITY_DEPARTURE_TIME: str(debug_departure_time),  # Use debug departure
+                ENTITY_DEPARTURE_OVERRIDE: str(debug_departure_time),  # Use debug departure
+                ENTITY_SMART_SWITCH: self.user_settings.get(ENTITY_SMART_SWITCH, True),
+                ENTITY_TARGET_OVERRIDE: debug_target_soc,  # Use debug target
+                ENTITY_PRICE_LIMIT_1: self.user_settings.get(ENTITY_PRICE_LIMIT_1, 0.5),
+                ENTITY_TARGET_SOC_1: self.user_settings.get(ENTITY_TARGET_SOC_1, 100),
+                ENTITY_PRICE_LIMIT_2: self.user_settings.get(ENTITY_PRICE_LIMIT_2, 1.5),
+                ENTITY_TARGET_SOC_2: self.user_settings.get(ENTITY_TARGET_SOC_2, 80),
+                ENTITY_PRICE_EXTRA_FEE: self.user_settings.get(ENTITY_PRICE_EXTRA_FEE, 0.0),
+                ENTITY_PRICE_VAT: self.user_settings.get(ENTITY_PRICE_VAT, 0.0),
+            },
+            
+            # State flags
+            "manual_override_active": self.manual_override_active,
+            "previous_plugged_state": True,  # Assume plugged for scenario
+            
+            # Current sensor data (with custom SoC)
+            "sensor_data": {
+                "car_soc": debug_current_soc,  # Use debug SoC
+                "car_plugged": True,  # Assume plugged for scenario
+                "car_limit": data.get("car_limit"),
+                "p1_l1": data.get("p1_l1"),
+                "p1_l2": data.get("p1_l2"),
+                "p1_l3": data.get("p1_l3"),
+                "ch_l1": data.get("ch_l1"),
+                "ch_l2": data.get("ch_l2"),
+                "ch_l3": data.get("ch_l3"),
+                "zap_limit_value": data.get("zap_limit_value"),
+            },
+            
+            # Price data (with fallback logic applied)
+            "price_data": {
+                "today": today_prices,
+                "tomorrow": tomorrow_prices,
+                "tomorrow_valid": tomorrow_valid,
+                "prices_faked": not price_data.get("tomorrow_valid", False),
+            },
+            
+            # Calendar events if any
+            "calendar_events": data.get("calendar_events", []),
+            
+            # Efficiency learning state
+            "efficiency_learning": {
+                "learned_loss_pct": self.learning_state.get(LEARNING_CHARGER_LOSS, 0.0),
+                "confidence": self.learning_state.get(LEARNING_CONFIDENCE, 0),
+                "locked": self.learning_state.get(LEARNING_LOCKED, False),
+                "configured_loss_pct": float(self.entry.options.get(CONF_CHARGER_LOSS, self.entry.data.get(CONF_CHARGER_LOSS, DEFAULT_LOSS))),
+            },
+        }
+        
+        # Format as JSON
+        json_dump = json.dumps(custom_dump, indent=2, default=str)
+        
+        # Save to file
+        file_path = self.hass.config.path("www", "ev_optimizer_custom_scenario.json")
+        _LOGGER.debug(f"💾 Saving custom scenario to: {file_path}")
+        
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w') as f:
+                f.write(json_dump)
+            _LOGGER.info(f"✅ Custom scenario saved to: {file_path}")
+            _LOGGER.info(f"📥 Download at: /local/ev_optimizer_custom_scenario.json")
+            
+            # Also log summary
+            _LOGGER.info("=" * 80)
+            _LOGGER.info("CUSTOM DEBUG SCENARIO SAVED")
+            _LOGGER.info("=" * 80)
+            _LOGGER.info(f"Current Time: {debug_current_time}")
+            _LOGGER.info(f"Departure: {debug_departure_time}")
+            _LOGGER.info(f"Current SoC: {debug_current_soc}%")
+            _LOGGER.info(f"Target SoC: {debug_target_soc}%")
+            _LOGGER.info(f"Tomorrow prices: {'faked (copied from today)' if not price_data.get('tomorrow_valid') else 'real'}")
+            _LOGGER.info(f"Download: /local/ev_optimizer_custom_scenario.json")
+            _LOGGER.info("=" * 80)
+            
+        except Exception as e:
+            _LOGGER.error(f"❌ Failed to save custom scenario to file: {e}")
+        
+        return custom_dump
 
     def _track_price_arrival(self, price_data: dict):
         """Track when tomorrow's prices become available to learn the pattern."""
